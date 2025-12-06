@@ -15,7 +15,6 @@ import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.project.Project;
 import com.intellij.psi.*;
 import io.swagger.v3.oas.models.OpenAPI;
-import io.swagger.v3.oas.models.PathItem;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -39,64 +38,62 @@ public class ApiDriftInspection extends AbstractBaseJavaLocalInspectionTool {
     private static final Set<String> SPRING_REQUEST_ANNOTATIONS = ANNOTATION_TO_HTTP_METHOD.keySet();
 
     public ApiDriftInspection() {
-        LOG.warn("--- ApiDriftInspection INSTANCE CREATED ---");
+        LOG.warn("[ApiDriftInspection] INSTANCE CREATED.");
     }
 
     @NotNull
     @Override
     public PsiElementVisitor buildVisitor(@NotNull ProblemsHolder holder, boolean isOnTheFly) {
+        LOG.warn("[ApiDriftInspection] buildVisitor() called for file: " + holder.getFile().getName());
         OpenApiSpecService specService = holder.getProject().getService(OpenApiSpecService.class);
         OpenAPI openApi = specService.getSpec();
 
         if (openApi == null) {
+            LOG.warn("[ApiDriftInspection] OpenAPI spec is null. Handling spec not found.");
             handleSpecNotFound(holder);
             return PsiElementVisitor.EMPTY_VISITOR;
         }
 
-        LOG.info("--- Building ApiDriftInspection visitor for file: " + holder.getFile().getName() + " ---");
-
+        LOG.warn("[ApiDriftInspection] Returning new JavaElementVisitor.");
         return new JavaElementVisitor() {
             @Override
             public void visitMethod(@NotNull PsiMethod method) {
+                LOG.warn("[ApiDriftInspection] visitMethod() called for method: " + method.getName());
                 super.visitMethod(method);
-                LOG.debug("Visiting method: " + method.getName());
 
                 Optional<PsiAnnotation> annotationOpt = findSpringRequestAnnotation(method);
 
                 if (annotationOpt.isEmpty()) {
-                    LOG.debug("No relevant Spring annotation found on method: " + method.getName());
+                    LOG.warn("[ApiDriftInspection] No relevant Spring annotation found on method: " + method.getName());
                     return;
                 }
 
                 PsiAnnotation annotation = annotationOpt.get();
                 String qualifiedName = annotation.getQualifiedName();
-                LOG.debug("Found Spring annotation '" + qualifiedName + "' on method: " + method.getName());
+                LOG.warn("[ApiDriftInspection] Found Spring annotation '" + qualifiedName + "' on method: " + method.getName());
 
                 PathValue pathValue = getPathFromAnnotation(annotation);
                 if (pathValue == null) {
-                    LOG.warn("Could not extract path from annotation on method: " + method.getName());
+                    LOG.warn("[ApiDriftInspection] Could not extract path from annotation on method: " + method.getName());
                     return;
                 }
-                LOG.warn("Path extracted from annotation: '" + pathValue.path + "'");
+                LOG.warn("[ApiDriftInspection] Extracted path '" + pathValue.path + "' from annotation.");
 
-                PathItem pathItem = PathValidator.validate(openApi, pathValue.path, pathValue.elementToHighlight, holder);
+                LOG.warn("[ApiDriftInspection] Calling PathValidator.");
+                PathValidator.validate(openApi, pathValue.path, pathValue.elementToHighlight, holder);
 
-                if (pathItem != null) {
-                    // Path is valid, now validate the method
-                    String httpMethod = ANNOTATION_TO_HTTP_METHOD.get(qualifiedName);
-                    if (httpMethod != null) {
-                        LOG.warn("Path is valid. Calling MethodValidator for HTTP method: '" + httpMethod + "'");
-                        PsiElement elementToHighlight = getElementToHighlight(annotation);
-                        LOG.info("Element to highlight: " + elementToHighlight.getText() + "pathItem" + pathItem);
-                        MethodValidator.validate(httpMethod, pathItem, elementToHighlight, holder);
-                    }
+                String httpMethod = ANNOTATION_TO_HTTP_METHOD.get(qualifiedName);
+                if (httpMethod != null) {
+                    LOG.warn("[ApiDriftInspection] Calling MethodValidator for HTTP method: '" + httpMethod + "'");
+                    PsiElement elementToHighlight = getElementToHighlight(annotation);
+                    MethodValidator.validate(openApi, pathValue.path, httpMethod, elementToHighlight, holder);
                 }
             }
         };
     }
 
     private void handleSpecNotFound(@NotNull ProblemsHolder holder) {
-        LOG.warn("ApiDriftInspection: No OpenAPI spec found. Inspection will not run.");
+        LOG.warn("[ApiDriftInspection] handleSpecNotFound() called.");
         Notification notification = new Notification(
                 "ApiContractValidator",
                 "OpenAPI Spec Not Found",
@@ -107,6 +104,7 @@ public class ApiDriftInspection extends AbstractBaseJavaLocalInspectionTool {
         notification.addAction(new NotificationAction("Reload Spec") {
             @Override
             public void actionPerformed(@NotNull AnActionEvent e, @NotNull Notification notification) {
+                LOG.warn("[ApiDriftInspection] 'Reload Spec' action performed.");
                 Project project = e.getProject();
                 if (project != null) {
                     project.getService(OpenApiSpecService.class).reloadSpec();
@@ -120,6 +118,7 @@ public class ApiDriftInspection extends AbstractBaseJavaLocalInspectionTool {
     }
 
     private Optional<PsiAnnotation> findSpringRequestAnnotation(@NotNull PsiMethod method) {
+        LOG.warn("[ApiDriftInspection] findSpringRequestAnnotation() called for method: " + method.getName());
         return Arrays.stream(method.getModifierList().getAnnotations())
                 .filter(a -> SPRING_REQUEST_ANNOTATIONS.contains(a.getQualifiedName()))
                 .findFirst();
@@ -127,20 +126,18 @@ public class ApiDriftInspection extends AbstractBaseJavaLocalInspectionTool {
 
     @NotNull
     private PsiElement getElementToHighlight(@NotNull PsiAnnotation annotation) {
-        LOG.warn("getElementToHighlight: Starting for annotation '" + annotation.getText() + "'");
+        LOG.warn("[ApiDriftInspection] getElementToHighlight() called for annotation '" + annotation.getText() + "'");
         PsiJavaCodeReferenceElement annotationNameElement = annotation.getNameReferenceElement();
         if (annotationNameElement != null) {
-            LOG.warn("getElementToHighlight: Found annotation name element: '" + annotationNameElement.getText() + "'");
             PsiElement identifier = annotationNameElement.getReferenceNameElement();
             if (identifier != null) {
-                LOG.warn("getElementToHighlight: Found identifier: '" + identifier.getText() + "'. Using this for highlighting.");
+                LOG.warn("[ApiDriftInspection] Returning identifier: '" + identifier.getText() + "'");
                 return identifier;
-            } else {
-                LOG.warn("getElementToHighlight: Identifier was null. Falling back to annotation name element.");
-                return annotationNameElement;
             }
+            LOG.warn("[ApiDriftInspection] Returning annotation name element: '" + annotationNameElement.getText() + "'");
+            return annotationNameElement;
         }
-        LOG.warn("getElementToHighlight: Annotation name element was null. Falling back to the full annotation text.");
+        LOG.warn("[ApiDriftInspection] Returning full annotation text.");
         return annotation;
     }
 
@@ -156,6 +153,7 @@ public class ApiDriftInspection extends AbstractBaseJavaLocalInspectionTool {
 
     @Nullable
     private PathValue getPathFromAnnotation(@NotNull PsiAnnotation annotation) {
+        LOG.warn("[ApiDriftInspection] getPathFromAnnotation() called for annotation: " + annotation.getQualifiedName());
         PsiAnnotationMemberValue valueAttribute = annotation.findAttributeValue("value");
         if (valueAttribute instanceof PsiLiteralExpression) {
             Object value = ((PsiLiteralExpression) valueAttribute).getValue();
@@ -163,7 +161,6 @@ public class ApiDriftInspection extends AbstractBaseJavaLocalInspectionTool {
                 return new PathValue((String) value, valueAttribute);
             }
         }
-        // Also check for "path" attribute
         PsiAnnotationMemberValue pathAttribute = annotation.findAttributeValue("path");
         if (pathAttribute instanceof PsiLiteralExpression) {
             Object value = ((PsiLiteralExpression) pathAttribute).getValue();

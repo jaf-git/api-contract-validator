@@ -34,14 +34,15 @@ public class OpenApiSpecService implements Disposable {
 
     public OpenApiSpecService(@NotNull Project project) {
         this.project = project;
-        LOG.warn("--- OpenApiSpecService INSTANCE CREATED for project: " + project.getName() + " ---");
+        LOG.warn("[OpenApiSpecService] INSTANCE CREATED for project: " + project.getName());
 
         project.getMessageBus().connect(this).subscribe(VirtualFileManager.VFS_CHANGES, new BulkFileListener() {
             @Override
             public void after(@NotNull List<? extends VFileEvent> events) {
+                LOG.warn("[OpenApiSpecService] VFS_CHANGES event received.");
                 for (VFileEvent event : events) {
                     if (event.getFile() != null && event.getFile().getName().equals(SPEC_FILE_NAME)) {
-                        LOG.warn("Detected change in '" + SPEC_FILE_NAME + "'. Reloading spec and re-analyzing project.");
+                        LOG.warn("[OpenApiSpecService] Detected change in '" + SPEC_FILE_NAME + "'. Reloading spec and re-analyzing project.");
                         reloadSpec();
                         DaemonCodeAnalyzer.getInstance(project).restart();
                         break;
@@ -53,41 +54,45 @@ public class OpenApiSpecService implements Disposable {
 
     @Nullable
     public OpenAPI getSpec() {
+        LOG.warn("[OpenApiSpecService] getSpec() called.");
         return openApi.get();
     }
 
     public void reloadSpec() {
-        LOG.info("reloadSpec(): Starting spec reload.");
+        LOG.warn("[OpenApiSpecService] reloadSpec() called.");
         VirtualFile specFile = findSpecFile();
         OpenAPI parsedApi = null;
 
         if (specFile == null) {
-            LOG.warn("reloadSpec(): No '" + SPEC_FILE_NAME + "' file found in project.");
+            LOG.warn("[OpenApiSpecService] reloadSpec(): No '" + SPEC_FILE_NAME + "' file found in project.");
             notifyOfReloadStatus(false, "Could not find '" + SPEC_FILE_NAME + "' in the project.", NotificationType.WARNING);
         } else {
-            LOG.info("reloadSpec(): Found spec file at: " + specFile.getPath());
+            LOG.warn("[OpenApiSpecService] reloadSpec(): Found spec file at: " + specFile.getPath());
             try {
                 parsedApi = new OpenAPIV3Parser().read(specFile.getPath());
                 if (parsedApi == null) {
-                    LOG.error("reloadSpec(): Failed to parse the OpenAPI spec. The file might be invalid.");
+                    LOG.error("[OpenApiSpecService] reloadSpec(): Failed to parse the OpenAPI spec. The file might be invalid.");
                     notifyOfReloadStatus(false, "Failed to parse '" + SPEC_FILE_NAME + "'. The file may be invalid.", NotificationType.ERROR);
                 } else {
                     int pathCount = parsedApi.getPaths() != null ? parsedApi.getPaths().size() : 0;
-                    LOG.info("reloadSpec(): Successfully parsed and cached the OpenAPI spec. Found " + pathCount + " paths.");
+                    LOG.warn("[OpenApiSpecService] reloadSpec(): Successfully parsed and cached the OpenAPI spec. Found " + pathCount + " paths.");
                     notifyOfReloadStatus(true, "Successfully reloaded '" + SPEC_FILE_NAME + "' with " + pathCount + " paths.", NotificationType.INFORMATION);
                 }
             } catch (Exception e) {
-                LOG.error("reloadSpec(): An exception occurred during parsing.", e);
+                LOG.error("[OpenApiSpecService] reloadSpec(): An exception occurred during parsing.", e);
                 notifyOfReloadStatus(false, "An error occurred while parsing '" + SPEC_FILE_NAME + "'.", NotificationType.ERROR);
             }
         }
 
+        LOG.warn("[OpenApiSpecService] Setting openApi reference.");
         openApi.set(parsedApi);
-        // Publish the update to the message bus
+        LOG.warn("[OpenApiSpecService] Publishing update to SPEC_UPDATE_TOPIC.");
         project.getMessageBus().syncPublisher(SpecUpdateListener.SPEC_UPDATE_TOPIC).onSpecUpdate(parsedApi);
+        LOG.warn("[OpenApiSpecService] Finished publishing update.");
     }
 
     private void notifyOfReloadStatus(boolean success, String content, NotificationType type) {
+        LOG.warn("[OpenApiSpecService] notifyOfReloadStatus() called with success=" + success);
         String title = success ? "OpenAPI Spec Reloaded" : "OpenAPI Spec Reload Failed";
         Notification notification = new Notification("ApiContractValidator", title, content, type);
         Notifications.Bus.notify(notification, project);
@@ -95,19 +100,21 @@ public class OpenApiSpecService implements Disposable {
 
     @Nullable
     private VirtualFile findSpecFile() {
-        LOG.info("findSpecFile(): Searching for '" + SPEC_FILE_NAME + "'");
+        LOG.warn("[OpenApiSpecService] findSpecFile() called.");
         return ApplicationManager.getApplication().runReadAction((com.intellij.openapi.util.Computable<VirtualFile>) () -> {
+            LOG.warn("[OpenApiSpecService] findSpecFile(): Entering read-action.");
             Collection<VirtualFile> files = FilenameIndex.getVirtualFilesByName(
                 SPEC_FILE_NAME,
                 GlobalSearchScope.projectScope(project)
             );
-            LOG.info("findSpecFile(): FilenameIndex returned " + files.size() + " file(s).");
+            LOG.warn("[OpenApiSpecService] findSpecFile(): FilenameIndex returned " + files.size() + " file(s).");
+            LOG.warn("[OpenApiSpecService] findSpecFile(): Exiting read-action.");
             return files.isEmpty() ? null : files.iterator().next();
         });
     }
 
     @Override
     public void dispose() {
-        LOG.warn("Disposing OpenApiSpecService for project: " + project.getName());
+        LOG.warn("[OpenApiSpecService] dispose() called for project: " + project.getName());
     }
 }

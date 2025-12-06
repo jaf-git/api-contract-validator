@@ -1,74 +1,111 @@
 package com.github.jafgit.apicontractvalidator.toolpanel;
 
 import com.github.jafgit.apicontractvalidator.listeners.SpecUpdateListener;
-import com.github.jafgit.apicontractvalidator.services.OpenApiSpecService;
+import com.github.jafgit.apicontractvalidator.toolpanel.model.EndpointInfo;
+import com.github.jafgit.apicontractvalidator.toolpanel.renderer.ApiEndpointRenderer;
+import com.github.jafgit.apicontractvalidator.toolpanel.services.ApiStatusService;
+import com.intellij.openapi.Disposable;
+import com.intellij.openapi.diagnostic.Logger;
+import com.intellij.openapi.progress.ProgressIndicator;
+import com.intellij.openapi.progress.ProgressManager;
+import com.intellij.openapi.progress.Task;
 import com.intellij.openapi.project.Project;
+import com.intellij.openapi.vfs.VirtualFile;
+import com.intellij.openapi.vfs.VirtualFileManager;
+import com.intellij.openapi.vfs.newvfs.BulkFileListener;
+import com.intellij.openapi.vfs.newvfs.events.VFileEvent;
 import com.intellij.ui.components.JBScrollPane;
 import com.intellij.ui.treeStructure.Tree;
 import io.swagger.v3.oas.models.OpenAPI;
-import io.swagger.v3.oas.models.PathItem;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import javax.swing.*;
 import javax.swing.tree.DefaultMutableTreeNode;
 import javax.swing.tree.DefaultTreeModel;
 import java.awt.*;
-import java.util.Map;
+import java.util.List;
 
-public class ApiToolWindowPanel extends JPanel {
+public class ApiToolWindowPanel extends JPanel implements Disposable {
+
+    private static final Logger LOG = Logger.getInstance(ApiToolWindowPanel.class);
 
     private final Tree apiTree;
     private final DefaultTreeModel treeModel;
+    private final Project project;
 
     public ApiToolWindowPanel(Project project) {
         super(new BorderLayout());
+        this.project = project;
+        LOG.warn("[ApiToolWindowPanel] INSTANCE CREATED for project: " + project.getName());
 
-        DefaultMutableTreeNode root = new DefaultMutableTreeNode("OpenAPI Paths");
+        DefaultMutableTreeNode root = new DefaultMutableTreeNode("API Endpoints");
         treeModel = new DefaultTreeModel(root);
         apiTree = new Tree(treeModel);
         apiTree.setRootVisible(false);
+        apiTree.setCellRenderer(new ApiEndpointRenderer());
 
         JBScrollPane scrollPane = new JBScrollPane(apiTree);
         add(scrollPane, BorderLayout.CENTER);
 
-        // Listen for future spec updates
-        project.getMessageBus().connect().subscribe(SpecUpdateListener.SPEC_UPDATE_TOPIC, new SpecUpdateListener() {
+        LOG.warn("[ApiToolWindowPanel] Subscribing to SPEC_UPDATE_TOPIC.");
+        project.getMessageBus().connect(this).subscribe(SpecUpdateListener.SPEC_UPDATE_TOPIC, new SpecUpdateListener() {
             @Override
             public void onSpecUpdate(@Nullable OpenAPI openApi) {
-                SwingUtilities.invokeLater(() -> updateTree(openApi));
+                LOG.warn("[ApiToolWindowPanel] onSpecUpdate event received.");
+                updateTreeInBackground();
             }
         });
 
-        // Fetch the initial state immediately
-        OpenApiSpecService specService = project.getService(OpenApiSpecService.class);
-        if (specService != null) {
-            updateTree(specService.getSpec());
-        }
-    }
-
-    private void updateTree(OpenAPI openApi) {
-        DefaultMutableTreeNode root = (DefaultMutableTreeNode) treeModel.getRoot();
-        root.removeAllChildren();
-
-        if (openApi != null && openApi.getPaths() != null && !openApi.getPaths().isEmpty()) {
-            for (Map.Entry<String, PathItem> entry : openApi.getPaths().entrySet()) {
-                DefaultMutableTreeNode pathNode = new DefaultMutableTreeNode(entry.getKey());
-                addOperations(pathNode, entry.getValue());
-                root.add(pathNode);
+        LOG.warn("[ApiToolWindowPanel] Subscribing to VFS_CHANGES.");
+        project.getMessageBus().connect(this).subscribe(VirtualFileManager.VFS_CHANGES, new BulkFileListener() {
+            @Override
+            public void after(@NotNull List<? extends VFileEvent> events) {
+                LOG.warn("[ApiToolWindowPanel] VFS_CHANGES event received.");
+                for (VFileEvent event : events) {
+                    VirtualFile file = event.getFile();
+                    if (file != null && "java".equals(file.getExtension())) {
+                        LOG.warn("[ApiToolWindowPanel] Java file changed: " + file.getName() + ". Triggering tree update.");
+                        updateTreeInBackground();
+                        return;
+                    }
+                }
             }
-        } else {
-            DefaultMutableTreeNode emptyNode = new DefaultMutableTreeNode("No 'openapi.yaml' found or it is empty.");
-            root.add(emptyNode);
-        }
-
-        treeModel.reload(root);
+        });
     }
 
-    private void addOperations(DefaultMutableTreeNode pathNode, PathItem pathItem) {
-        if (pathItem.getGet() != null) pathNode.add(new DefaultMutableTreeNode("GET"));
-        if (pathItem.getPost() != null) pathNode.add(new DefaultMutableTreeNode("POST"));
-        if (pathItem.getPut() != null) pathNode.add(new DefaultMutableTreeNode("PUT"));
-        if (pathItem.getDelete() != null) pathNode.add(new DefaultMutableTreeNode("DELETE"));
-        if (pathItem.getPatch() != null) pathNode.add(new DefaultMutableTreeNode("PATCH"));
+    private void updateTreeInBackground() {
+        LOG.warn("[ApiToolWindowPanel] updateTreeInBackground() called.");
+        ProgressManager.getInstance().run(new Task.Backgroundable(project, "Scanning API Endpoints...") {
+            @Override
+            public void run(@NotNull ProgressIndicator indicator) {
+                LOG.warn("[ApiToolWindowPanel] Background task run() started.");
+                ApiStatusService statusService = new ApiStatusService(project);
+                LOG.warn("[ApiToolWindowPanel] Creating ApiStatusService: "+ statusService);
+                List<EndpointInfo> endpoints = statusService.getEndpointInfos();
+                LOG.warn("[ApiToolWindowPanel] Background task finished. Found " + endpoints + " endpoints.");
+                SwingUtilities.invokeLater(() -> {
+                    LOG.warn("[ApiToolWindowPanel] Updating UI on EDT.");
+                    DefaultMutableTreeNode root = (DefaultMutableTreeNode) treeModel.getRoot();
+                    LOG.warn("[ApiToolWindowPanel] root: " + root);
+                    root.removeAllChildren();
+
+                    if (endpoints.isEmpty()) {
+                        root.add(new DefaultMutableTreeNode("No 'openapi.yaml' found or it is empty."));
+                    } else {
+                        for (EndpointInfo endpoint : endpoints) {
+                            root.add(new DefaultMutableTreeNode(endpoint));
+                        }
+                    }
+                    treeModel.reload(root);
+                    LOG.warn("[ApiToolWindowPanel] UI update complete.");
+                });
+            }
+        });
+    }
+
+    @Override
+    public void dispose() {
+        LOG.warn("[ApiToolWindowPanel] dispose() called.");
     }
 }

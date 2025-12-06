@@ -10,9 +10,6 @@ import kotlin.coroutines.Continuation;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-/**
- * Java version of the background task that loads the OpenAPI spec.
- */
 public class SpecLoaderActivity implements ProjectActivity {
 
     private static final Logger LOG = Logger.getInstance(SpecLoaderActivity.class);
@@ -20,20 +17,20 @@ public class SpecLoaderActivity implements ProjectActivity {
     @Nullable
     @Override
     public Object execute(@NotNull Project project, @NotNull Continuation<? super kotlin.Unit> continuation) {
-        LOG.warn("--- SpecLoaderActivity execute() called for project: " + project.getName() + " ---");
+        LOG.warn("[SpecLoaderActivity] execute() called for project: " + project.getName());
 
         new Task.Backgroundable(project, "Loading OpenAPI Contract") {
             @Override
             public void run(@NotNull ProgressIndicator indicator) {
-                LOG.warn("--- Background task run() started ---");
+                LOG.warn("[SpecLoaderActivity] Background task run() started.");
                 indicator.setText("Indexing OpenAPI specification...");
-                // Use getService() in Java
+                LOG.warn("[SpecLoaderActivity] Calling OpenApiSpecService.reloadSpec().");
                 project.getService(OpenApiSpecService.class).reloadSpec();
-                LOG.warn("--- Background task run() finished ---");
+                LOG.warn("[SpecLoaderActivity] Background task run() finished.");
             }
         }.queue();
 
-        LOG.warn("--- Background task has been queued ---");
+        LOG.warn("[SpecLoaderActivity] Background task has been queued.");
         return null;
     }
 }

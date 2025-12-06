@@ -2,30 +2,26 @@ package com.github.jafgit.apicontractvalidator.validator;
 
 import com.intellij.codeInspection.ProblemHighlightType;
 import com.intellij.codeInspection.ProblemsHolder;
+import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.psi.PsiElement;
 import io.swagger.v3.oas.models.OpenAPI;
-import io.swagger.v3.oas.models.PathItem;
 import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
 
 public class PathValidator {
 
-    /**
-     * Validates if a path exists in the OpenAPI spec.
-     * @return The PathItem if valid, otherwise null.
-     */
-    @Nullable
-    public static PathItem validate(@NotNull OpenAPI openApi, @NotNull String path, @NotNull PsiElement elementToHighlight, @NotNull ProblemsHolder holder) {
-        PathItem pathItem = openApi.getPaths() != null ? openApi.getPaths().get(path) : null;
+    private static final Logger LOG = Logger.getInstance(PathValidator.class);
 
-        if (pathItem == null) {
+    public static void validate(@NotNull OpenAPI openApi, @NotNull String path, @NotNull PsiElement elementToHighlight, @NotNull ProblemsHolder holder) {
+        LOG.warn("[PathValidator] validate() called for path: '" + path + "'");
+        if (openApi.getPaths() == null || !openApi.getPaths().containsKey(path)) {
+            LOG.warn("[PathValidator] DRIFT DETECTED: Path '" + path + "' is missing from the contract.");
             holder.registerProblem(
                     elementToHighlight,
                     "API Drift Detected: Path '" + path + "' is missing from openapi.yaml contract.",
                     ProblemHighlightType.WARNING
             );
-            return null;
+        } else {
+            LOG.warn("[PathValidator] SUCCESS: Path '" + path + "' is valid.");
         }
-        return pathItem;
     }
 }

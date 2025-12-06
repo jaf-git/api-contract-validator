@@ -17,8 +17,8 @@
         <projectService
                 serviceImplementation="com.github.jafgit.apicontractvalidator.services.OpenApiSpecService"/>
 
-        <!-- Register the startup activity that will load the spec in the background -->
-        <postStartupActivity
+        <!-- Register the startup activity to load the spec in the background -->
+        <backgroundPostStartupActivity
                 implementation="com.github.jafgit.apicontractvalidator.startup.SpecLoaderActivity"/>
 
         <!-- Register our new API Drift Inspection -->
