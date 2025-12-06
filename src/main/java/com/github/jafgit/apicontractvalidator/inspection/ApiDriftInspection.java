@@ -2,6 +2,7 @@ package com.github.jafgit.apicontractvalidator.inspection;
 
 import com.github.jafgit.apicontractvalidator.services.OpenApiSpecService;
 import com.github.jafgit.apicontractvalidator.validator.MethodValidator;
+import com.github.jafgit.apicontractvalidator.validator.ParameterValidator;
 import com.github.jafgit.apicontractvalidator.validator.PathValidator;
 import com.intellij.codeInsight.daemon.DaemonCodeAnalyzer;
 import com.intellij.codeInspection.AbstractBaseJavaLocalInspectionTool;
@@ -15,6 +16,8 @@ import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.project.Project;
 import com.intellij.psi.*;
 import io.swagger.v3.oas.models.OpenAPI;
+import io.swagger.v3.oas.models.Operation;
+import io.swagger.v3.oas.models.PathItem;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -87,6 +90,15 @@ public class ApiDriftInspection extends AbstractBaseJavaLocalInspectionTool {
                     LOG.warn("[ApiDriftInspection] Calling MethodValidator for HTTP method: '" + httpMethod + "'");
                     PsiElement elementToHighlight = getElementToHighlight(annotation);
                     MethodValidator.validate(openApi, pathValue.path, httpMethod, elementToHighlight, holder);
+
+                    PathItem pathItem = openApi.getPaths() != null ? openApi.getPaths().get(pathValue.path) : null;
+                    if (pathItem != null) {
+                        Operation operation = getOperation(pathItem, httpMethod);
+                        if (operation != null) {
+                            LOG.warn("[ApiDriftInspection] Calling ParameterValidator for method: " + method.getName());
+                            ParameterValidator.validate(openApi, operation, method, holder);
+                        }
+                    }
                 }
             }
         };
@@ -139,6 +151,24 @@ public class ApiDriftInspection extends AbstractBaseJavaLocalInspectionTool {
         }
         LOG.warn("[ApiDriftInspection] Returning full annotation text.");
         return annotation;
+    }
+
+    @Nullable
+    private Operation getOperation(PathItem pathItem, String httpMethod) {
+        switch (httpMethod.toLowerCase()) {
+            case "get":
+                return pathItem.getGet();
+            case "post":
+                return pathItem.getPost();
+            case "put":
+                return pathItem.getPut();
+            case "delete":
+                return pathItem.getDelete();
+            case "patch":
+                return pathItem.getPatch();
+            default:
+                return null;
+        }
     }
 
     private static class PathValue {

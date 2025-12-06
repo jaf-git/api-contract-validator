@@ -4,11 +4,13 @@ public class EndpointInfo {
     private final String path;
     private final String method;
     private EndpointStatus status;
+    private final String tag; // New field for grouping
 
-    public EndpointInfo(String path, String method, EndpointStatus status) {
+    public EndpointInfo(String path, String method, EndpointStatus status, String tag) {
         this.path = path;
         this.method = method;
         this.status = status;
+        this.tag = tag;
     }
 
     public String getPath() {
@@ -27,9 +29,12 @@ public class EndpointInfo {
         this.status = status;
     }
 
+    public String getTag() {
+        return tag;
+    }
+
     @Override
     public String toString() {
-        // This is a fallback, the custom renderer will be used primarily
         return method + " " + path;
     }
 }

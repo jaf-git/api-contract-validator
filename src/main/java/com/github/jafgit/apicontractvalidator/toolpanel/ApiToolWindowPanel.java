@@ -25,6 +25,8 @@ import javax.swing.tree.DefaultMutableTreeNode;
 import javax.swing.tree.DefaultTreeModel;
 import java.awt.*;
 import java.util.List;
+import java.util.Map;
+import java.util.TreeMap; // Use TreeMap to keep tags sorted
 
 public class ApiToolWindowPanel extends JPanel implements Disposable {
 
@@ -83,7 +85,7 @@ public class ApiToolWindowPanel extends JPanel implements Disposable {
                 ApiStatusService statusService = new ApiStatusService(project);
                 LOG.warn("[ApiToolWindowPanel] Creating ApiStatusService: "+ statusService);
                 List<EndpointInfo> endpoints = statusService.getEndpointInfos();
-                LOG.warn("[ApiToolWindowPanel] Background task finished. Found " + endpoints + " endpoints.");
+                LOG.warn("[ApiToolWindowPanel] Background task finished. Found " + endpoints.size() + " endpoints.");
                 SwingUtilities.invokeLater(() -> {
                     LOG.warn("[ApiToolWindowPanel] Updating UI on EDT.");
                     DefaultMutableTreeNode root = (DefaultMutableTreeNode) treeModel.getRoot();
@@ -93,8 +95,20 @@ public class ApiToolWindowPanel extends JPanel implements Disposable {
                     if (endpoints.isEmpty()) {
                         root.add(new DefaultMutableTreeNode("No 'openapi.yaml' found or it is empty."));
                     } else {
+                        Map<String, DefaultMutableTreeNode> tagNodes = new TreeMap<>(); // Use TreeMap for sorted tags
+
                         for (EndpointInfo endpoint : endpoints) {
-                            root.add(new DefaultMutableTreeNode(endpoint));
+                            String tag = endpoint.getTag();
+                            if (tag == null || tag.trim().isEmpty()) {
+                                tag = "General"; // Default tag for untagged endpoints
+                            }
+
+                            DefaultMutableTreeNode tagNode = tagNodes.computeIfAbsent(tag, k -> {
+                                DefaultMutableTreeNode newNode = new DefaultMutableTreeNode(k);
+                                root.add(newNode);
+                                return newNode;
+                            });
+                            tagNode.add(new DefaultMutableTreeNode(endpoint));
                         }
                     }
                     treeModel.reload(root);

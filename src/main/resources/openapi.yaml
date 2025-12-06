@@ -1,0 +1,856 @@
+openapi: 3.0.3
+info:
+  title: E-Commerce Platform API
+  description: >-
+    A comprehensive API for managing an e-commerce platform. Includes products,
+    users, orders, authentication and inventory management. This specification
+    is designed to be a robust test case for API drift detection and for
+    generating DTOs, controllers, and contract tests.
+  version: 1.2.0
+  contact:
+    name: E-Commerce Platform API Team
+    email: api-team@ecommerce-example.com
+    url: https://ecommerce-example.com
+  license:
+    name: MIT
+servers:
+  - url: https://api.ecommerce-example.com/v1
+    description: Production
+  - url: https://staging-api.ecommerce-example.com/v1
+    description: Staging
+  - url: http://localhost:8080/v1
+    description: Local development
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: Products
+    description: Operations for product catalog management [create, read, update, delete, search].
+  - name: Users
+    description: User management [registration, login, profile].
+  - name: Orders
+    description: Order placement, retrieval, updates and cancellations.
+  - name: Inventory
+    description: Inventory and stock control endpoints.
+  - name: Auth
+    description: Authentication-related endpoints (login, refresh token).
+
+paths:
+  /products:
+    get:
+      tags:
+        - Products
+      summary: List products (paginated)
+      description: Returns a paginated list of products. Supports filtering and sorting.
+      operationId: listProducts
+      parameters:
+        - $ref: '#/components/parameters/limit'
+        - $ref: '#/components/parameters/offset'
+        - name: category
+          in: query
+          description: Filter by product category ID
+          schema:
+            type: string
+            format: uuid
+        - name: minPrice
+          in: query
+          description: Minimum price filter (inclusive)
+          schema:
+            type: number
+            format: float
+        - name: maxPrice
+          in: query
+          description: Maximum price filter (inclusive)
+          schema:
+            type: number
+            format: float
+        - name: q
+          in: query
+          description: Full-text search query (name, description, tags)
+          schema:
+            type: string
+        - name: sort
+          in: query
+          description: Sort order (e.g. price:asc, createdAt:desc)
+          schema:
+            type: string
+      responses:
+        '200':
+          description: A paginated list of products.
+          headers:
+            X-Total-Count:
+              description: Total number of products matching the filter
+              schema:
+                type: integer
+                format: int32
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProductList'
+              examples:
+                default:
+                  value:
+                    total: 2
+                    limit: 20
+                    offset: 0
+                    products:
+                      - id: "3fa85f64-5717-4562-b3fc-2c963f66afa6"
+                        name: "Premium Wireless Headphones"
+                        price: 199.99
+                        sku: "HDPHN-PREM-BLK"
+                      - id: "4b72d8b2-6c2b-4e8f-9e1a-0b6bdb3d9789"
+                        name: "Wireless Earbuds"
+                        price: 99.99
+        '400':
+          $ref: '#/components/responses/BadRequest'
+    post:
+      tags:
+        - Products
+      summary: Create a product
+      description: Create a new product in the catalog. Requires admin privileges.
+      operationId: createProduct
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProductInput'
+            examples:
+              newProduct:
+                value:
+                  name: "Noise Cancelling Headphones"
+                  description: "Top-tier noise cancelling headphones"
+                  price: 249.99
+                  sku: "HDPHN-NC-2025"
+                  categoryId: "c1d3f5e6-7a89-4b6c-8d5e-e0f0a1b2c3d4"
+      responses:
+        '201':
+          description: Product created successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Product'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+
+  /products/{productId}:
+    parameters:
+      - name: productId
+        in: path
+        required: true
+        description: Product UUID
+        schema:
+          type: string
+          format: uuid
+    get:
+      tags:
+        - Products
+      summary: Get product by ID
+      operationId: getProductById
+      responses:
+        '200':
+          description: Product found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Product'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    put:
+      tags:
+        - Products
+      summary: Replace an existing product
+      operationId: replaceProduct
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProductInput'
+      responses:
+        '200':
+          description: Product updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Product'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      tags:
+        - Products
+      summary: Partially update a product
+      operationId: patchProduct
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              description: Partial product fields to update
+              example:
+                price: 179.99
+      responses:
+        '200':
+          description: Product patched successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Product'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      tags:
+        - Products
+      summary: Delete a product
+      operationId: deleteProduct
+      responses:
+        '204':
+          description: Product deleted successfully (no content).
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /products/{productId}/reviews:
+    get:
+      tags:
+        - Products
+      summary: List product reviews
+      operationId: listProductReviews
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 10
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+      responses:
+        '200':
+          description: A list of reviews for the product
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  total:
+                    type: integer
+                  reviews:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Review'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /users:
+    post:
+      tags:
+        - Users
+      summary: Register a new user
+      operationId: createUser
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserInput'
+            examples:
+              newUser:
+                value:
+                  username: "jdoe"
+                  email: "jdoe@example.com"
+                  password: "P@ssw0rd!"
+      responses:
+        '201':
+          description: User created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /auth/login:
+    post:
+      tags:
+        - Auth
+      summary: Log a user in (returns JWT)
+      operationId: loginUser
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - username
+                - password
+              properties:
+                username:
+                  type: string
+                password:
+                  type: string
+              example:
+                username: "jdoe"
+                password: "P@ssw0rd!"
+      responses:
+        '200':
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthToken'
+          headers:
+            X-Rate-Limit:
+              description: Calls per hour allowed by the user
+              schema:
+                type: integer
+                format: int32
+            X-Expires-After:
+              description: Datetime in UTC when the token expires
+              schema:
+                type: string
+                format: date-time
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /auth/refresh:
+    post:
+      tags:
+        - Auth
+      summary: Refresh access token
+      operationId: refreshToken
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - refreshToken
+              properties:
+                refreshToken:
+                  type: string
+      responses:
+        '200':
+          description: Token refreshed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthToken'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /orders:
+    post:
+      tags:
+        - Orders
+      summary: Place a new order
+      operationId: placeOrder
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OrderInput'
+      responses:
+        '201':
+          description: Order placed successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+    get:
+      tags:
+        - Orders
+      summary: List orders for authenticated user
+      operationId: listOrders
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/limit'
+        - $ref: '#/components/parameters/offset'
+      responses:
+        '200':
+          description: Orders list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  total:
+                    type: integer
+                  orders:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Order'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /orders/{orderId}:
+    parameters:
+      - name: orderId
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+    get:
+      tags:
+        - Orders
+      summary: Get order by ID
+      operationId: getOrderById
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Order details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    post:
+      tags:
+        - Orders
+      summary: Cancel an order
+      description: Cancel an order if allowed by status (e.g., placed but not shipped).
+      operationId: cancelOrder
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Order cancelled successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          description: Cannot cancel an order in the current state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /inventory/status/{sku}:
+    get:
+      tags:
+        - Inventory
+      summary: Get product inventory status by SKU
+      operationId: getInventoryStatus
+      parameters:
+        - name: sku
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Inventory status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InventoryStatus'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /inventory/adjust:
+    post:
+      tags:
+        - Inventory
+      summary: Adjust inventory quantity for a SKU
+      operationId: adjustInventory
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - sku
+                - delta
+              properties:
+                sku:
+                  type: string
+                delta:
+                  type: integer
+                  description: Positive to add stock, negative to reduce
+                reason:
+                  type: string
+            examples:
+              addStock:
+                value:
+                  sku: "HDPHN-PREM-BLK"
+                  delta: 50
+                  reason: "Restock from supplier"
+      responses:
+        '200':
+          description: Inventory adjusted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InventoryStatus'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+    apiKey:
+      type: apiKey
+      in: header
+      name: X-API-Key
+
+  parameters:
+    limit:
+      name: limit
+      in: query
+      description: Maximum number of items to return (max 100)
+      schema:
+        type: integer
+        format: int32
+        default: 20
+        maximum: 100
+    offset:
+      name: offset
+      in: query
+      description: Pagination offset
+      schema:
+        type: integer
+        format: int32
+        default: 0
+
+  responses:
+    BadRequest:
+      description: Bad Request
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Unauthorized:
+      description: Unauthorized
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    NotFound:
+      description: Not Found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    UnprocessableEntity:
+      description: Unprocessable Entity
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+  schemas:
+    Product:
+      type: object
+      required:
+        - id
+        - name
+        - price
+        - sku
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        description:
+          type: string
+        price:
+          type: number
+          format: float
+        sku:
+          type: string
+        category:
+          $ref: '#/components/schemas/Category'
+        tags:
+          type: array
+          items:
+            type: string
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    ProductInput:
+      type: object
+      required:
+        - name
+        - price
+        - sku
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        price:
+          type: number
+          format: float
+        sku:
+          type: string
+        categoryId:
+          type: string
+          format: uuid
+        tags:
+          type: array
+          items:
+            type: string
+
+    ProductList:
+      type: object
+      properties:
+        total:
+          type: integer
+          format: int32
+        limit:
+          type: integer
+        offset:
+          type: integer
+        products:
+          type: array
+          items:
+            $ref: '#/components/schemas/Product'
+
+    Category:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+
+    Review:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        userId:
+          type: integer
+        rating:
+          type: integer
+        comment:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+
+    User:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        username:
+          type: string
+        email:
+          type: string
+          format: email
+        phone:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+
+    UserInput:
+      type: object
+      required:
+        - username
+        - email
+        - password
+      properties:
+        username:
+          type: string
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          format: password
+
+    AuthToken:
+      type: object
+      properties:
+        accessToken:
+          type: string
+        tokenType:
+          type: string
+          example: "Bearer"
+        expiresIn:
+          type: integer
+          description: seconds until token expires
+        refreshToken:
+          type: string
+
+    Order:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        userId:
+          type: integer
+          format: int64
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/OrderItem'
+        totalAmount:
+          type: number
+          format: float
+        status:
+          type: string
+          enum:
+            - placed
+            - approved
+            - shipped
+            - delivered
+            - cancelled
+        shipDate:
+          type: string
+          format: date-time
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    OrderInput:
+      type: object
+      required:
+        - userId
+        - items
+      properties:
+        userId:
+          type: integer
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/OrderItemInput'
+        shippingAddress:
+          type: object
+          properties:
+            line1:
+              type: string
+            line2:
+              type: string
+            city:
+              type: string
+            postalCode:
+              type: string
+            country:
+              type: string
+
+    OrderItem:
+      type: object
+      properties:
+        productId:
+          type: string
+          format: uuid
+        quantity:
+          type: integer
+        priceAtPurchase:
+          type: number
+          format: float
+
+    OrderItemInput:
+      type: object
+      required:
+        - productId
+        - quantity
+      properties:
+        productId:
+          type: string
+          format: uuid
+        quantity:
+          type: integer
+          default: 1
+
+    InventoryStatus:
+      type: object
+      properties:
+        sku:
+          type: string
+        quantity:
+          type: integer
+        status:
+          type: string
+          enum: [in_stock, low_stock, out_of_stock]
+        updatedAt:
+          type: string
+          format: date-time
+
+    Error:
+      type: object
+      required:
+        - code
+        - message
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+        details:
+          type: object
+          additionalProperties: true
+
+  examples:
+    ProductExample:
+      summary: Example product
+      value:
+        id: "3fa85f64-5717-4562-b3fc-2c963f66afa6"
+        name: "Premium Wireless Headphones"
+        description: "Top-tier active noise cancelling headphones."
+        price: 199.99
+        sku: "HDPHN-PREM-BLK"
+        category:
+          id: "c1d3f5e6-7a89-4b6c-8d5e-e0f0a1b2c3d4"
+          name: "Audio"
+        tags:
+          - "audio"
+          - "premium"
+        createdAt: "2025-01-01T12:00:00Z"
+        updatedAt: "2025-02-01T12:00:00Z"
+
+externalDocs:
+  description: API usage guide and examples
+  url: https://docs.ecommerce-example.com/api

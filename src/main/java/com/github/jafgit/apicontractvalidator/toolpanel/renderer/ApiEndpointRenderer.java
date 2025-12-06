@@ -36,7 +36,7 @@ public class ApiEndpointRenderer implements TreeCellRenderer {
             Object userObject = ((DefaultMutableTreeNode) value).getUserObject();
             if (userObject instanceof EndpointInfo) {
                 EndpointInfo endpoint = (EndpointInfo) userObject;
-                LOG.warn("[ApiEndpointRenderer] Rendering EndpointInfo: " + endpoint.getMethod() + " " + endpoint.getPath());
+                LOG.warn("[ApiEndpointRenderer] Rendering EndpointInfo: " + endpoint.getMethod() + " " + endpoint.getPath() + " with status: " + endpoint.getStatus().name());
 
                 methodLabel.setText(endpoint.getMethod());
                 pathLabel.setText(" " + endpoint.getPath());
