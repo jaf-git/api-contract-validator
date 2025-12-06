@@ -227,17 +227,27 @@ public class ApiStatusService {
     }
 
     private String combinePaths(String c, String m) {
-        String cp = (c == null) ? "" : c.trim();
-        String mp = (m == null) ? "" : m.trim();
-        LOG.warn("[ApiStatusService] combinePaths(): Combining class path '" + c + "' and method path '" + m + "'");
-        if (!cp.startsWith("/")) cp = "/" + cp;
-        if (!mp.startsWith("/")) mp = "/" + mp;
-        if (cp.endsWith("/") && cp.length() > 1) cp = cp.substring(0, cp.length() - 1);
-        if (mp.endsWith("/") && mp.length() > 1) mp = mp.substring(0, mp.length() - 1);
-        if ("/".equals(cp)) cp = "";
-        String full = (cp + mp).replaceAll("/+", "/");
-        full = full.isEmpty() ? "/" : full;
-        LOG.warn("[ApiStatusService] combinePaths(): Result: '" + full + "'");
-        return full;
+        String classPath = (c == null) ? "" : c.trim();
+        String methodPath = (m == null) ? "" : m.trim();
+
+        // Remove leading/trailing slashes from both parts for consistent joining
+        if (classPath.startsWith("/")) classPath = classPath.substring(1);
+        if (classPath.endsWith("/")) classPath = classPath.substring(0, classPath.length() - 1);
+
+        if (methodPath.startsWith("/")) methodPath = methodPath.substring(1);
+        if (methodPath.endsWith("/")) methodPath = methodPath.substring(0, methodPath.length() - 1);
+
+        String combinedPath;
+        if (classPath.isEmpty() && methodPath.isEmpty()) {
+            combinedPath = "/";
+        } else if (classPath.isEmpty()) {
+            combinedPath = "/" + methodPath;
+        } else if (methodPath.isEmpty()) {
+            combinedPath = "/" + classPath;
+        } else {
+            combinedPath = "/" + classPath + "/" + methodPath;
+        }
+        LOG.warn("[ApiStatusService] combinePaths(): Result: '" + combinedPath + "'");
+        return combinedPath;
     }
 }

@@ -23,6 +23,7 @@ import org.jetbrains.annotations.Nullable;
 
 import java.util.Arrays;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 
@@ -39,6 +40,7 @@ public class ApiDriftInspection extends AbstractBaseJavaLocalInspectionTool {
     );
 
     private static final Set<String> SPRING_REQUEST_ANNOTATIONS = ANNOTATION_TO_HTTP_METHOD.keySet();
+    private static final String REQUEST_MAPPING = "org.springframework.web.bind.annotation.RequestMapping";
 
     public ApiDriftInspection() {
         LOG.warn("[ApiDriftInspection] INSTANCE CREATED.");
@@ -48,8 +50,11 @@ public class ApiDriftInspection extends AbstractBaseJavaLocalInspectionTool {
     @Override
     public PsiElementVisitor buildVisitor(@NotNull ProblemsHolder holder, boolean isOnTheFly) {
         LOG.warn("[ApiDriftInspection] buildVisitor() called for file: " + holder.getFile().getName());
-        OpenApiSpecService specService = holder.getProject().getService(OpenApiSpecService.class);
+        Project project = holder.getProject();
+        OpenApiSpecService specService = project.getService(OpenApiSpecService.class);
         OpenAPI openApi = specService.getSpec();
+        PsiConstantEvaluationHelper constEval = JavaPsiFacade.getInstance(project).getConstantEvaluationHelper();
+
 
         if (openApi == null) {
             LOG.warn("[ApiDriftInspection] OpenAPI spec is null. Handling spec not found.");
@@ -71,32 +76,43 @@ public class ApiDriftInspection extends AbstractBaseJavaLocalInspectionTool {
                     return;
                 }
 
-                PsiAnnotation annotation = annotationOpt.get();
-                String qualifiedName = annotation.getQualifiedName();
+                PsiAnnotation methodAnnotation = annotationOpt.get();
+                String qualifiedName = methodAnnotation.getQualifiedName();
                 LOG.warn("[ApiDriftInspection] Found Spring annotation '" + qualifiedName + "' on method: " + method.getName());
 
-                PathValue pathValue = getPathFromAnnotation(annotation);
-                if (pathValue == null) {
-                    LOG.warn("[ApiDriftInspection] Could not extract path from annotation on method: " + method.getName());
-                    return;
-                }
-                LOG.warn("[ApiDriftInspection] Extracted path '" + pathValue.path + "' from annotation.");
+                // Get class-level paths
+                String[] classPaths = getClassLevelPaths(method.getContainingClass(), constEval);
+                // Get method-level paths
+                String[] methodPaths = extractPaths(methodAnnotation, constEval);
+                if (methodPaths.length == 0) methodPaths = new String[]{""}; // Default to empty string for root path
 
-                LOG.warn("[ApiDriftInspection] Calling PathValidator.");
-                PathValidator.validate(openApi, pathValue.path, pathValue.elementToHighlight, holder);
+                // Determine the element to highlight for the method annotation
+                PsiElement elementToHighlight = getElementToHighlight(methodAnnotation);
 
-                String httpMethod = ANNOTATION_TO_HTTP_METHOD.get(qualifiedName);
-                if (httpMethod != null) {
-                    LOG.warn("[ApiDriftInspection] Calling MethodValidator for HTTP method: '" + httpMethod + "'");
-                    PsiElement elementToHighlight = getElementToHighlight(annotation);
-                    MethodValidator.validate(openApi, pathValue.path, httpMethod, elementToHighlight, holder);
+                for (String classPath : classPaths) {
+                    for (String methodPath : methodPaths) {
+                        String fullPath = combinePaths(classPath, methodPath);
+                        LOG.warn("[ApiDriftInspection] Combined path for method '" + method.getName() + "': '" + fullPath + "'");
 
-                    PathItem pathItem = openApi.getPaths() != null ? openApi.getPaths().get(pathValue.path) : null;
-                    if (pathItem != null) {
-                        Operation operation = getOperation(pathItem, httpMethod);
-                        if (operation != null) {
-                            LOG.warn("[ApiDriftInspection] Calling ParameterValidator for method: " + method.getName());
-                            ParameterValidator.validate(openApi, operation, method, holder);
+                        // Validate Path
+                        LOG.warn("[ApiDriftInspection] Calling PathValidator for path: " + fullPath);
+                        PathValidator.validate(openApi, fullPath, elementToHighlight, holder);
+
+                        // Validate Method
+                        String httpMethod = ANNOTATION_TO_HTTP_METHOD.get(qualifiedName);
+                        if (httpMethod != null) {
+                            LOG.warn("[ApiDriftInspection] Calling MethodValidator for HTTP method: '" + httpMethod + "' on path: " + fullPath);
+                            MethodValidator.validate(openApi, fullPath, httpMethod, elementToHighlight, holder);
+
+                            // Validate Parameters
+                            PathItem pathItem = openApi.getPaths() != null ? openApi.getPaths().get(fullPath) : null;
+                            if (pathItem != null) {
+                                Operation operation = getOperation(pathItem, httpMethod);
+                                if (operation != null) {
+                                    LOG.warn("[ApiDriftInspection] Calling ParameterValidator for method: " + method.getName() + " on path: " + fullPath);
+                                    ParameterValidator.validate(openApi, operation, method, holder);
+                                }
+                            }
                         }
                     }
                 }
@@ -171,33 +187,62 @@ public class ApiDriftInspection extends AbstractBaseJavaLocalInspectionTool {
         }
     }
 
-    private static class PathValue {
-        final String path;
-        final PsiElement elementToHighlight;
+    // --- Helper methods for path extraction and combination (adapted from ApiStatusService) ---
 
-        PathValue(String path, PsiElement element) {
-            this.path = path;
-            this.elementToHighlight = element;
+    private String[] getClassLevelPaths(PsiClass psiClass, PsiConstantEvaluationHelper constEval) {
+        if (psiClass == null) return new String[]{""};
+        PsiAnnotation classAnn = psiClass.getAnnotation(REQUEST_MAPPING);
+        if (classAnn == null) return new String[]{""};
+        String[] classPaths = extractPaths(classAnn, constEval);
+        LOG.warn("[ApiDriftInspection] getClassLevelPaths(): Class level paths for " + psiClass.getName() + ": " + Arrays.toString(classPaths));
+        return (classPaths.length == 0) ? new String[]{""} : classPaths;
+    }
+
+    private String[] extractPaths(PsiAnnotation annotation, PsiConstantEvaluationHelper constEval) {
+        PsiAnnotationMemberValue val = annotation.findAttributeValue("value");
+        if (val == null) val = annotation.findAttributeValue("path");
+        if (val == null) {
+            LOG.warn("[ApiDriftInspection] extractPaths(): No 'value' or 'path' attribute found for annotation: " + annotation.getQualifiedName());
+            return new String[0];
+        }
+        if (val instanceof PsiArrayInitializerMemberValue) {
+            return Arrays.stream(((PsiArrayInitializerMemberValue) val).getInitializers())
+                    .map(v -> resolveString(v, constEval))
+                    .filter(Objects::nonNull)
+                    .toArray(String[]::new);
+        } else {
+            String path = resolveString(val, constEval);
+            return path == null ? new String[0] : new String[]{path};
         }
     }
 
-    @Nullable
-    private PathValue getPathFromAnnotation(@NotNull PsiAnnotation annotation) {
-        LOG.warn("[ApiDriftInspection] getPathFromAnnotation() called for annotation: " + annotation.getQualifiedName());
-        PsiAnnotationMemberValue valueAttribute = annotation.findAttributeValue("value");
-        if (valueAttribute instanceof PsiLiteralExpression) {
-            Object value = ((PsiLiteralExpression) valueAttribute).getValue();
-            if (value instanceof String) {
-                return new PathValue((String) value, valueAttribute);
-            }
+    private String resolveString(PsiAnnotationMemberValue value, PsiConstantEvaluationHelper constEval) {
+        Object constValue = constEval.computeConstantExpression(value);
+        return constValue instanceof String ? (String) constValue : null;
+    }
+
+    private String combinePaths(String c, String m) {
+        String classPath = (c == null) ? "" : c.trim();
+        String methodPath = (m == null) ? "" : m.trim();
+
+        // Remove leading/trailing slashes from both parts for consistent joining
+        if (classPath.startsWith("/")) classPath = classPath.substring(1);
+        if (classPath.endsWith("/")) classPath = classPath.substring(0, classPath.length() - 1);
+
+        if (methodPath.startsWith("/")) methodPath = methodPath.substring(1);
+        if (methodPath.endsWith("/")) methodPath = methodPath.substring(0, methodPath.length() - 1);
+
+        String combinedPath;
+        if (classPath.isEmpty() && methodPath.isEmpty()) {
+            combinedPath = "/";
+        } else if (classPath.isEmpty()) {
+            combinedPath = "/" + methodPath;
+        } else if (methodPath.isEmpty()) {
+            combinedPath = "/" + classPath;
+        } else {
+            combinedPath = "/" + classPath + "/" + methodPath;
         }
-        PsiAnnotationMemberValue pathAttribute = annotation.findAttributeValue("path");
-        if (pathAttribute instanceof PsiLiteralExpression) {
-            Object value = ((PsiLiteralExpression) pathAttribute).getValue();
-            if (value instanceof String) {
-                return new PathValue((String) value, pathAttribute);
-            }
-        }
-        return null;
+
+        return combinedPath;
     }
 }
