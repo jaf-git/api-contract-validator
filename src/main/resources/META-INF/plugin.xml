@@ -5,11 +5,30 @@
     <vendor>jaf-git</vendor>
 
     <depends>com.intellij.modules.platform</depends>
+    <depends>com.intellij.java</depends>
 
     <resource-bundle>messages.MyBundle</resource-bundle>
 
     <extensions defaultExtensionNs="com.intellij">
-        <toolWindow factoryClass="com.github.jafgit.apicontractvalidator.toolWindow.MyToolWindowFactory" id="MyToolWindow"/>
-        <postStartupActivity implementation="com.github.jafgit.apicontractvalidator.startup.MyProjectActivity" />
+        <!-- Register the notification group -->
+        <notificationGroup id="ApiContractValidator" displayType="BALLOON" />
+
+        <!-- Register the project service that will hold the cached spec -->
+        <projectService
+                serviceImplementation="com.github.jafgit.apicontractvalidator.services.OpenApiSpecService"/>
+
+        <!-- Register the startup activity that will load the spec in the background -->
+        <postStartupActivity
+                implementation="com.github.jafgit.apicontractvalidator.startup.SpecLoaderActivity"/>
+
+        <!-- Register our new API Drift Inspection -->
+        <localInspection
+                language="JAVA"
+                groupName="API Contract Validator"
+                displayName="API Contract Validation"
+                enabledByDefault="true"
+                level="ERROR"
+                implementationClass="com.github.jafgit.apicontractvalidator.inspection.ApiDriftInspection"/>
+
     </extensions>
 </idea-plugin>
