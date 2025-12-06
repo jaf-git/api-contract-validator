@@ -30,5 +30,11 @@
                 level="ERROR"
                 implementationClass="com.github.jafgit.apicontractvalidator.inspection.ApiDriftInspection"/>
 
+        <!-- Register the API Contract Tool Window -->
+        <toolWindow
+                id="API Contract"
+                anchor="right"
+                factoryClass="com.github.jafgit.apicontractvalidator.toolpanel.ApiToolWindowFactory"/>
+
     </extensions>
 </idea-plugin>

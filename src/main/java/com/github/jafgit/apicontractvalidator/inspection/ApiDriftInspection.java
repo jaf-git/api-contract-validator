@@ -1,6 +1,8 @@
 package com.github.jafgit.apicontractvalidator.inspection;
 
 import com.github.jafgit.apicontractvalidator.services.OpenApiSpecService;
+import com.github.jafgit.apicontractvalidator.validator.MethodValidator;
+import com.github.jafgit.apicontractvalidator.validator.PathValidator;
 import com.intellij.codeInsight.daemon.DaemonCodeAnalyzer;
 import com.intellij.codeInspection.AbstractBaseJavaLocalInspectionTool;
 import com.intellij.codeInspection.ProblemsHolder;
@@ -13,10 +15,12 @@ import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.project.Project;
 import com.intellij.psi.*;
 import io.swagger.v3.oas.models.OpenAPI;
+import io.swagger.v3.oas.models.PathItem;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.Arrays;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 
@@ -24,16 +28,18 @@ public class ApiDriftInspection extends AbstractBaseJavaLocalInspectionTool {
 
     private static final Logger LOG = Logger.getInstance(ApiDriftInspection.class);
 
-    private static final Set<String> SPRING_REQUEST_ANNOTATIONS = Set.of(
-        "org.springframework.web.bind.annotation.GetMapping",
-        "org.springframework.web.bind.annotation.PostMapping",
-        "org.springframework.web.bind.annotation.PutMapping",
-        "org.springframework.web.bind.annotation.DeleteMapping",
-        "org.springframework.web.bind.annotation.PatchMapping"
+    private static final Map<String, String> ANNOTATION_TO_HTTP_METHOD = Map.of(
+            "org.springframework.web.bind.annotation.GetMapping", "get",
+            "org.springframework.web.bind.annotation.PostMapping", "post",
+            "org.springframework.web.bind.annotation.PutMapping", "put",
+            "org.springframework.web.bind.annotation.DeleteMapping", "delete",
+            "org.springframework.web.bind.annotation.PatchMapping", "patch"
     );
 
+    private static final Set<String> SPRING_REQUEST_ANNOTATIONS = ANNOTATION_TO_HTTP_METHOD.keySet();
+
     public ApiDriftInspection() {
-        LOG.error("--- ApiDriftInspection INSTANCE CREATED ---");
+        LOG.warn("--- ApiDriftInspection INSTANCE CREATED ---");
     }
 
     @NotNull
@@ -43,71 +49,99 @@ public class ApiDriftInspection extends AbstractBaseJavaLocalInspectionTool {
         OpenAPI openApi = specService.getSpec();
 
         if (openApi == null) {
-            LOG.error("ApiDriftInspection: No OpenAPI spec found. Inspection will not run.");
-            // Create a notification with a reload action
-            Notification notification = new Notification(
-                "ApiContractValidator",
-                "OpenAPI Spec Not Found",
-                "The OpenAPI specification file (openapi.yaml) was not found in the project.", // content
-                NotificationType.WARNING
-            );
-
-            notification.addAction(new NotificationAction("Reload Spec") {
-                @Override
-                public void actionPerformed(@NotNull AnActionEvent e, @NotNull Notification notification) {
-                    Project project = e.getProject();
-                    if (project != null) {
-                        // Get the service and try reloading the spec
-                        project.getService(OpenApiSpecService.class).reloadSpec();
-                        // Restart analysis to re-trigger the inspection
-                        DaemonCodeAnalyzer.getInstance(project).restart();
-                        notification.expire();
-                    }
-                }
-            });
-
-            Notifications.Bus.notify(notification, holder.getProject());
+            handleSpecNotFound(holder);
             return PsiElementVisitor.EMPTY_VISITOR;
         }
 
-        LOG.warn("--- Building ApiDriftInspection visitor for file: " + holder.getFile().getName() + " ---");
+        LOG.info("--- Building ApiDriftInspection visitor for file: " + holder.getFile().getName() + " ---");
 
         return new JavaElementVisitor() {
             @Override
             public void visitMethod(@NotNull PsiMethod method) {
                 super.visitMethod(method);
-                LOG.info("Visiting method: " + method.getName());
+                LOG.debug("Visiting method: " + method.getName());
 
-                Optional<PsiAnnotation> annotationOpt = Arrays.stream(method.getModifierList().getAnnotations())
-                    .filter(a -> SPRING_REQUEST_ANNOTATIONS.contains(a.getQualifiedName()))
-                    .findFirst();
+                Optional<PsiAnnotation> annotationOpt = findSpringRequestAnnotation(method);
 
                 if (annotationOpt.isEmpty()) {
-                    LOG.info("No relevant Spring annotation found on method: " + method.getName());
+                    LOG.debug("No relevant Spring annotation found on method: " + method.getName());
                     return;
                 }
 
                 PsiAnnotation annotation = annotationOpt.get();
-                LOG.warn("Found Spring annotation '" + annotation.getQualifiedName() + "' on method: " + method.getName());
+                String qualifiedName = annotation.getQualifiedName();
+                LOG.debug("Found Spring annotation '" + qualifiedName + "' on method: " + method.getName());
 
                 PathValue pathValue = getPathFromAnnotation(annotation);
                 if (pathValue == null) {
                     LOG.warn("Could not extract path from annotation on method: " + method.getName());
                     return;
                 }
-                LOG.warn("Extracted path '" + pathValue.path + "' from annotation.");
+                LOG.warn("Path extracted from annotation: '" + pathValue.path + "'");
 
-                if (openApi.getPaths() == null || !openApi.getPaths().containsKey(pathValue.path)) {
-                    LOG.error("DRIFT DETECTED: Path '" + pathValue.path + "' is MISSING from the contract.");
-                    holder.registerProblem(
-                        pathValue.elementToHighlight,
-                        "API Drift Detected: Path '" + pathValue.path + "' is missing from openapi.yaml contract."
-                    );
-                } else {
-                    LOG.info("Path '" + pathValue.path + "' is valid and exists in the contract.");
+                PathItem pathItem = PathValidator.validate(openApi, pathValue.path, pathValue.elementToHighlight, holder);
+
+                if (pathItem != null) {
+                    // Path is valid, now validate the method
+                    String httpMethod = ANNOTATION_TO_HTTP_METHOD.get(qualifiedName);
+                    if (httpMethod != null) {
+                        LOG.warn("Path is valid. Calling MethodValidator for HTTP method: '" + httpMethod + "'");
+                        PsiElement elementToHighlight = getElementToHighlight(annotation);
+                        LOG.info("Element to highlight: " + elementToHighlight.getText() + "pathItem" + pathItem);
+                        MethodValidator.validate(httpMethod, pathItem, elementToHighlight, holder);
+                    }
                 }
             }
         };
+    }
+
+    private void handleSpecNotFound(@NotNull ProblemsHolder holder) {
+        LOG.warn("ApiDriftInspection: No OpenAPI spec found. Inspection will not run.");
+        Notification notification = new Notification(
+                "ApiContractValidator",
+                "OpenAPI Spec Not Found",
+                "The OpenAPI specification file (openapi.yaml) was not found in the project.",
+                NotificationType.WARNING
+        );
+
+        notification.addAction(new NotificationAction("Reload Spec") {
+            @Override
+            public void actionPerformed(@NotNull AnActionEvent e, @NotNull Notification notification) {
+                Project project = e.getProject();
+                if (project != null) {
+                    project.getService(OpenApiSpecService.class).reloadSpec();
+                    DaemonCodeAnalyzer.getInstance(project).restart();
+                    notification.expire();
+                }
+            }
+        });
+
+        Notifications.Bus.notify(notification, holder.getProject());
+    }
+
+    private Optional<PsiAnnotation> findSpringRequestAnnotation(@NotNull PsiMethod method) {
+        return Arrays.stream(method.getModifierList().getAnnotations())
+                .filter(a -> SPRING_REQUEST_ANNOTATIONS.contains(a.getQualifiedName()))
+                .findFirst();
+    }
+
+    @NotNull
+    private PsiElement getElementToHighlight(@NotNull PsiAnnotation annotation) {
+        LOG.warn("getElementToHighlight: Starting for annotation '" + annotation.getText() + "'");
+        PsiJavaCodeReferenceElement annotationNameElement = annotation.getNameReferenceElement();
+        if (annotationNameElement != null) {
+            LOG.warn("getElementToHighlight: Found annotation name element: '" + annotationNameElement.getText() + "'");
+            PsiElement identifier = annotationNameElement.getReferenceNameElement();
+            if (identifier != null) {
+                LOG.warn("getElementToHighlight: Found identifier: '" + identifier.getText() + "'. Using this for highlighting.");
+                return identifier;
+            } else {
+                LOG.warn("getElementToHighlight: Identifier was null. Falling back to annotation name element.");
+                return annotationNameElement;
+            }
+        }
+        LOG.warn("getElementToHighlight: Annotation name element was null. Falling back to the full annotation text.");
+        return annotation;
     }
 
     private static class PathValue {
@@ -127,6 +161,14 @@ public class ApiDriftInspection extends AbstractBaseJavaLocalInspectionTool {
             Object value = ((PsiLiteralExpression) valueAttribute).getValue();
             if (value instanceof String) {
                 return new PathValue((String) value, valueAttribute);
+            }
+        }
+        // Also check for "path" attribute
+        PsiAnnotationMemberValue pathAttribute = annotation.findAttributeValue("path");
+        if (pathAttribute instanceof PsiLiteralExpression) {
+            Object value = ((PsiLiteralExpression) pathAttribute).getValue();
+            if (value instanceof String) {
+                return new PathValue((String) value, pathAttribute);
             }
         }
         return null;

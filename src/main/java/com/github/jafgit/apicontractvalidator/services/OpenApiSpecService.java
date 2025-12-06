@@ -1,12 +1,18 @@
 package com.github.jafgit.apicontractvalidator.services;
 
+import com.github.jafgit.apicontractvalidator.listeners.SpecUpdateListener;
+import com.intellij.codeInsight.daemon.DaemonCodeAnalyzer;
 import com.intellij.notification.Notification;
 import com.intellij.notification.NotificationType;
 import com.intellij.notification.Notifications;
+import com.intellij.openapi.Disposable;
 import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.vfs.VirtualFile;
+import com.intellij.openapi.vfs.VirtualFileManager;
+import com.intellij.openapi.vfs.newvfs.BulkFileListener;
+import com.intellij.openapi.vfs.newvfs.events.VFileEvent;
 import com.intellij.psi.search.FilenameIndex;
 import com.intellij.psi.search.GlobalSearchScope;
 import io.swagger.v3.oas.models.OpenAPI;
@@ -15,14 +21,13 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.Collection;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
 
-/**
- * Java version of the project-level service for managing the OpenAPI specification.
- */
-public class OpenApiSpecService {
+public class OpenApiSpecService implements Disposable {
 
     private static final Logger LOG = Logger.getInstance(OpenApiSpecService.class);
+    private static final String SPEC_FILE_NAME = "openapi.yaml";
 
     private final Project project;
     private final AtomicReference<OpenAPI> openApi = new AtomicReference<>(null);
@@ -30,6 +35,20 @@ public class OpenApiSpecService {
     public OpenApiSpecService(@NotNull Project project) {
         this.project = project;
         LOG.warn("--- OpenApiSpecService INSTANCE CREATED for project: " + project.getName() + " ---");
+
+        project.getMessageBus().connect(this).subscribe(VirtualFileManager.VFS_CHANGES, new BulkFileListener() {
+            @Override
+            public void after(@NotNull List<? extends VFileEvent> events) {
+                for (VFileEvent event : events) {
+                    if (event.getFile() != null && event.getFile().getName().equals(SPEC_FILE_NAME)) {
+                        LOG.warn("Detected change in '" + SPEC_FILE_NAME + "'. Reloading spec and re-analyzing project.");
+                        reloadSpec();
+                        DaemonCodeAnalyzer.getInstance(project).restart();
+                        break;
+                    }
+                }
+            }
+        });
     }
 
     @Nullable
@@ -38,73 +57,57 @@ public class OpenApiSpecService {
     }
 
     public void reloadSpec() {
-        LOG.warn("reloadSpec(): Starting spec reload.");
+        LOG.info("reloadSpec(): Starting spec reload.");
         VirtualFile specFile = findSpecFile();
+        OpenAPI parsedApi = null;
 
         if (specFile == null) {
-            LOG.error("reloadSpec(): No 'openapi.yaml' file found in project.");
-            openApi.set(null);
-            Notification notification = new Notification(
-                "ApiContractValidator",
-                "OpenAPI Spec Not Found",
-                "Could not find 'openapi.yaml' in the project.",
-                NotificationType.WARNING
-            );
-            Notifications.Bus.notify(notification, project);
-            return;
-        }
-
-        LOG.warn("reloadSpec(): Found spec file at: " + specFile.getPath());
-        try {
-            OpenAPI parsedApi = new OpenAPIV3Parser().read(specFile.getPath());
-            openApi.set(parsedApi); // Set it right away
-
-            if (parsedApi == null) {
-                LOG.error("reloadSpec(): Failed to parse the OpenAPI spec. The file might be invalid.");
-                Notification notification = new Notification(
-                    "ApiContractValidator",
-                    "Failed to Parse OpenAPI Spec",
-                    "Could not parse 'openapi.yaml'. The file may be invalid or empty.",
-                    NotificationType.ERROR
-                );
-                Notifications.Bus.notify(notification, project);
-            } else {
-                int pathCount = parsedApi.getPaths() != null ? parsedApi.getPaths().size() : 0;
-                LOG.warn("reloadSpec(): Successfully parsed and cached the OpenAPI spec. Found " + pathCount + " paths.");
-                Notification notification = new Notification(
-                    "ApiContractValidator",
-                    "OpenAPI Spec Loaded",
-                    "Successfully loaded 'openapi.yaml' with " + pathCount + " paths.",
-                    NotificationType.INFORMATION
-                );
-                Notifications.Bus.notify(notification, project);
+            LOG.warn("reloadSpec(): No '" + SPEC_FILE_NAME + "' file found in project.");
+            notifyOfReloadStatus(false, "Could not find '" + SPEC_FILE_NAME + "' in the project.", NotificationType.WARNING);
+        } else {
+            LOG.info("reloadSpec(): Found spec file at: " + specFile.getPath());
+            try {
+                parsedApi = new OpenAPIV3Parser().read(specFile.getPath());
+                if (parsedApi == null) {
+                    LOG.error("reloadSpec(): Failed to parse the OpenAPI spec. The file might be invalid.");
+                    notifyOfReloadStatus(false, "Failed to parse '" + SPEC_FILE_NAME + "'. The file may be invalid.", NotificationType.ERROR);
+                } else {
+                    int pathCount = parsedApi.getPaths() != null ? parsedApi.getPaths().size() : 0;
+                    LOG.info("reloadSpec(): Successfully parsed and cached the OpenAPI spec. Found " + pathCount + " paths.");
+                    notifyOfReloadStatus(true, "Successfully reloaded '" + SPEC_FILE_NAME + "' with " + pathCount + " paths.", NotificationType.INFORMATION);
+                }
+            } catch (Exception e) {
+                LOG.error("reloadSpec(): An exception occurred during parsing.", e);
+                notifyOfReloadStatus(false, "An error occurred while parsing '" + SPEC_FILE_NAME + "'.", NotificationType.ERROR);
             }
-        } catch (Exception e) {
-            LOG.error("reloadSpec(): An exception occurred during parsing.", e);
-            openApi.set(null);
-            Notification notification = new Notification(
-                "ApiContractValidator",
-                "Error Loading OpenAPI Spec",
-                "An exception occurred while parsing 'openapi.yaml'.",
-                NotificationType.ERROR
-            );
-            Notifications.Bus.notify(notification, project);
         }
+
+        openApi.set(parsedApi);
+        // Publish the update to the message bus
+        project.getMessageBus().syncPublisher(SpecUpdateListener.SPEC_UPDATE_TOPIC).onSpecUpdate(parsedApi);
+    }
+
+    private void notifyOfReloadStatus(boolean success, String content, NotificationType type) {
+        String title = success ? "OpenAPI Spec Reloaded" : "OpenAPI Spec Reload Failed";
+        Notification notification = new Notification("ApiContractValidator", title, content, type);
+        Notifications.Bus.notify(notification, project);
     }
 
     @Nullable
     private VirtualFile findSpecFile() {
-        LOG.warn("findSpecFile(): Entering read-action to search index.");
-        // Use a Computable lambda for runReadAction in Java
-        VirtualFile file = ApplicationManager.getApplication().runReadAction((com.intellij.openapi.util.Computable<VirtualFile>) () -> {
+        LOG.info("findSpecFile(): Searching for '" + SPEC_FILE_NAME + "'");
+        return ApplicationManager.getApplication().runReadAction((com.intellij.openapi.util.Computable<VirtualFile>) () -> {
             Collection<VirtualFile> files = FilenameIndex.getVirtualFilesByName(
-                "openapi.yaml",
+                SPEC_FILE_NAME,
                 GlobalSearchScope.projectScope(project)
             );
-            LOG.warn("findSpecFile(): FilenameIndex returned " + files.size() + " file(s).");
+            LOG.info("findSpecFile(): FilenameIndex returned " + files.size() + " file(s).");
             return files.isEmpty() ? null : files.iterator().next();
         });
-        LOG.warn("findSpecFile(): Exiting read-action.");
-        return file;
+    }
+
+    @Override
+    public void dispose() {
+        LOG.warn("Disposing OpenApiSpecService for project: " + project.getName());
     }
 }
