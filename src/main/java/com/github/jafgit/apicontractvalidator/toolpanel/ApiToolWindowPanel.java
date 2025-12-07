@@ -3,7 +3,6 @@ package com.github.jafgit.apicontractvalidator.toolpanel;
 import com.github.jafgit.apicontractvalidator.toolpanel.model.EndpointInfo;
 import com.github.jafgit.apicontractvalidator.toolpanel.model.EndpointStatus;
 import com.github.jafgit.apicontractvalidator.toolpanel.renderer.ApiEndpointRenderer;
-import com.intellij.icons.AllIcons;
 import com.intellij.openapi.Disposable;
 import com.intellij.openapi.actionSystem.*;
 import com.intellij.openapi.project.Project;
@@ -11,6 +10,7 @@ import com.intellij.openapi.util.Disposer;
 import com.intellij.psi.PsiElement;
 import com.intellij.psi.SmartPsiElementPointer;
 import com.intellij.ui.DocumentAdapter;
+import com.intellij.ui.JBColor;
 import com.intellij.ui.SearchTextField;
 import com.intellij.ui.components.JBScrollPane;
 import com.intellij.ui.treeStructure.Tree;
@@ -32,33 +32,30 @@ public class ApiToolWindowPanel extends JPanel implements ApiToolWindowView, Dis
 
     public ApiToolWindowPanel(Project project) {
         super(new BorderLayout());
-
         this.presenter = new ApiToolWindowPresenter(this, project);
-
-        // Create and add the top panel (toolbar and search)
         add(createTopPanel(), BorderLayout.NORTH);
-
-        // Create and add the tree
         this.apiTree = createTree();
         add(new JBScrollPane(apiTree), BorderLayout.CENTER);
-
         presenter.initialize();
     }
 
     private JPanel createTopPanel() {
         JPanel topPanel = new JPanel(new BorderLayout());
-
-        // Create Toolbar
         DefaultActionGroup actionGroup = new DefaultActionGroup();
-        actionGroup.add(new FilterAction("Implemented", AllIcons.Actions.Commit, EndpointStatus.IMPLEMENTED, presenter));
-        actionGroup.add(new FilterAction("Not Implemented", AllIcons.Actions.Cancel, EndpointStatus.NOT_IMPLEMENTED, presenter));
-        actionGroup.add(new FilterAction("Has Issues", AllIcons.General.Warning, EndpointStatus.HAS_ISSUES, presenter));
+
+        // Define colors matching the renderer
+        Color implementedColor = new JBColor(new Color(40, 167, 69), new Color(40, 167, 69));
+        Color notImplementedColor = new JBColor(new Color(220, 53, 69), new Color(220, 53, 69));
+        Color hasIssuesColor = new JBColor(new Color(255, 193, 7), new Color(255, 193, 7));
+
+        actionGroup.add(new FilterAction("Implemented", new ColorBoxIcon(implementedColor), EndpointStatus.IMPLEMENTED, presenter));
+        actionGroup.add(new FilterAction("Not Implemented", new ColorBoxIcon(notImplementedColor), EndpointStatus.NOT_IMPLEMENTED, presenter));
+        actionGroup.add(new FilterAction("Has Issues", new ColorBoxIcon(hasIssuesColor), EndpointStatus.HAS_ISSUES, presenter));
 
         ActionToolbar toolbar = ActionManager.getInstance().createActionToolbar("ApiContractValidatorToolbar", actionGroup, true);
         toolbar.setTargetComponent(this);
         topPanel.add(toolbar.getComponent(), BorderLayout.WEST);
 
-        // Create Search Field
         SearchTextField searchTextField = new SearchTextField();
         searchTextField.addDocumentListener(new DocumentAdapter() {
             @Override
@@ -72,9 +69,7 @@ public class ApiToolWindowPanel extends JPanel implements ApiToolWindowView, Dis
     }
 
     private Tree createTree() {
-        DefaultMutableTreeNode root = new DefaultMutableTreeNode("Initializing...");
-        DefaultTreeModel treeModel = new DefaultTreeModel(root);
-        Tree tree = new Tree(treeModel);
+        Tree tree = new Tree(new DefaultTreeModel(new DefaultMutableTreeNode("Initializing...")));
         tree.setRootVisible(false);
         tree.setCellRenderer(new ApiEndpointRenderer());
         tree.addMouseListener(new MouseAdapter() {
@@ -91,20 +86,15 @@ public class ApiToolWindowPanel extends JPanel implements ApiToolWindowView, Dis
     private void handleDoubleClick(MouseEvent e) {
         TreePath path = apiTree.getPathForLocation(e.getX(), e.getY());
         if (path == null) return;
-
-        Object lastPathComponent = path.getLastPathComponent();
-        if (!(lastPathComponent instanceof DefaultMutableTreeNode)) return;
-
-        Object userObject = ((DefaultMutableTreeNode) lastPathComponent).getUserObject();
-        if (!(userObject instanceof EndpointInfo)) return;
-
-        EndpointInfo endpointInfo = (EndpointInfo) userObject;
-        SmartPsiElementPointer<?> pointer = endpointInfo.getMethodPointer();
-
-        if (pointer != null) {
-            PsiElement element = pointer.getElement();
-            if (element instanceof com.intellij.pom.Navigatable) {
-                ((com.intellij.pom.Navigatable) element).navigate(true);
+        Object node = path.getLastPathComponent();
+        if (node instanceof DefaultMutableTreeNode && ((DefaultMutableTreeNode) node).getUserObject() instanceof EndpointInfo) {
+            EndpointInfo endpointInfo = (EndpointInfo) ((DefaultMutableTreeNode) node).getUserObject();
+            SmartPsiElementPointer<?> pointer = endpointInfo.getMethodPointer();
+            if (pointer != null) {
+                PsiElement element = pointer.getElement();
+                if (element instanceof com.intellij.pom.Navigatable) {
+                    ((com.intellij.pom.Navigatable) element).navigate(true);
+                }
             }
         }
     }
@@ -134,11 +124,34 @@ public class ApiToolWindowPanel extends JPanel implements ApiToolWindowView, Dis
             return presenter.isStatusEnabled(status);
         }
 
-
-
         @Override
         public void setSelected(@NotNull AnActionEvent e, boolean state) {
             presenter.setStatusFilter(status, state);
+        }
+    }
+
+    private static class ColorBoxIcon implements Icon {
+        private final Color color;
+        private static final int SIZE = 12;
+
+        ColorBoxIcon(Color color) {
+            this.color = color;
+        }
+
+        @Override
+        public void paintIcon(Component c, Graphics g, int x, int y) {
+            g.setColor(color);
+            g.fillRect(x, y, SIZE, SIZE);
+        }
+
+        @Override
+        public int getIconWidth() {
+            return SIZE;
+        }
+
+        @Override
+        public int getIconHeight() {
+            return SIZE;
         }
     }
 }
