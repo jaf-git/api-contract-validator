@@ -3,6 +3,9 @@ package com.github.jafgit.apicontractvalidator.toolpanel.services;
 import com.github.jafgit.apicontractvalidator.services.OpenApiSpecService;
 import com.github.jafgit.apicontractvalidator.toolpanel.model.EndpointInfo;
 import com.github.jafgit.apicontractvalidator.toolpanel.model.EndpointStatus;
+import com.github.jafgit.apicontractvalidator.validator.MethodValidator;
+import com.github.jafgit.apicontractvalidator.validator.ParameterValidator;
+import com.github.jafgit.apicontractvalidator.validator.PathValidator;
 import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.project.Project;
@@ -14,7 +17,6 @@ import io.swagger.v3.oas.models.OpenAPI;
 import io.swagger.v3.oas.models.Operation;
 import io.swagger.v3.oas.models.PathItem;
 import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
 
 import java.util.*;
 
@@ -24,7 +26,6 @@ public class ApiStatusService {
 
     private final Project project;
     private final PsiConstantEvaluationHelper constEval;
-
 
     private static final Map<String, String> COMPOSED_MAPPINGS = Map.of(
             "org.springframework.web.bind.annotation.GetMapping", "GET",
@@ -38,99 +39,85 @@ public class ApiStatusService {
     public ApiStatusService(Project project) {
         this.project = project;
         this.constEval = JavaPsiFacade.getInstance(project).getConstantEvaluationHelper();
-        LOG.warn("[ApiStatusService] INSTANCE CREATED for project: " + project.getName());
     }
 
     public List<EndpointInfo> getEndpointInfos() {
-        LOG.warn("[ApiStatusService] getEndpointInfos() called.");
         OpenApiSpecService specService = project.getService(OpenApiSpecService.class);
         OpenAPI openApi = specService.getSpec();
 
         if (openApi == null || openApi.getPaths() == null) {
-            LOG.warn("[ApiStatusService] OpenAPI spec is null or has no paths. Returning empty list.");
             return new ArrayList<>();
         }
 
-        // Step 1: Find all implemented endpoints first.
-        Map<String, Set<String>> implementedEndpoints = findImplementedEndpoints();
-        LOG.warn("[ApiStatusService] AnnotationScanner found " + implementedEndpoints.size() + " unique implemented paths.");
-        LOG.warn("[ApiStatusService] Implemented Endpoints Map: " + implementedEndpoints);
+        Map<String, Map<String, PsiMethod>> implementedEndpoints = findImplementedEndpoints();
 
-
-        // Step 2: Build the final list from the spec, setting status on creation.
         List<EndpointInfo> finalEndpoints = new ArrayList<>();
-        for (Map.Entry<String, PathItem> pathEntry : openApi.getPaths().entrySet()) {
-            String path = pathEntry.getKey();
-            PathItem pathItem = pathEntry.getValue();
-            addEndpointInfoWithStatus(finalEndpoints, path, "GET", pathItem.getGet(), implementedEndpoints);
-            addEndpointInfoWithStatus(finalEndpoints, path, "POST", pathItem.getPost(), implementedEndpoints);
-            addEndpointInfoWithStatus(finalEndpoints, path, "PUT", pathItem.getPut(), implementedEndpoints);
-            addEndpointInfoWithStatus(finalEndpoints, path, "DELETE", pathItem.getDelete(), implementedEndpoints);
-            addEndpointInfoWithStatus(finalEndpoints, path, "PATCH", pathItem.getPatch(), implementedEndpoints);
-        }
+        ApplicationManager.getApplication().runReadAction(() -> {
+            for (Map.Entry<String, PathItem> pathEntry : openApi.getPaths().entrySet()) {
+                String path = pathEntry.getKey();
+                PathItem pathItem = pathEntry.getValue();
+                addEndpointInfoWithStatus(finalEndpoints, openApi, path, "GET", pathItem.getGet(), implementedEndpoints);
+                addEndpointInfoWithStatus(finalEndpoints, openApi, path, "POST", pathItem.getPost(), implementedEndpoints);
+                addEndpointInfoWithStatus(finalEndpoints, openApi, path, "PUT", pathItem.getPut(), implementedEndpoints);
+                addEndpointInfoWithStatus(finalEndpoints, openApi, path, "DELETE", pathItem.getDelete(), implementedEndpoints);
+                addEndpointInfoWithStatus(finalEndpoints, openApi, path, "PATCH", pathItem.getPatch(), implementedEndpoints);
+            }
+        });
 
-        LOG.warn("[ApiStatusService] getEndpointInfos() finished. Returning " + finalEndpoints.size() + " endpoints.");
         return finalEndpoints;
     }
 
-    private void addEndpointInfoWithStatus(List<EndpointInfo> endpointInfos, String path, String method, Operation operation, Map<String, Set<String>> implementedEndpoints) {
+    private void addEndpointInfoWithStatus(List<EndpointInfo> endpointInfos, OpenAPI openApi, String path, String method, Operation operation, Map<String, Map<String, PsiMethod>> implementedEndpoints) {
         if (operation == null) return;
-        Set<String> implementedMethods = implementedEndpoints.get(path);
-        boolean isImplemented = implementedMethods != null && implementedMethods.contains(method);
-        EndpointStatus status = isImplemented ? EndpointStatus.IMPLEMENTED : EndpointStatus.NOT_IMPLEMENTED;
-        
-        String tag = null;
-        if (operation.getTags() != null && !operation.getTags().isEmpty()) {
-            tag = operation.getTags().get(0); // Use the first tag for grouping
+
+        Map<String, PsiMethod> implementedMethods = implementedEndpoints.get(path);
+        PsiMethod psiMethod = (implementedMethods != null) ? implementedMethods.get(method) : null;
+        EndpointStatus status;
+        SmartPsiElementPointer<PsiMethod> methodPointer = null;
+
+        if (psiMethod == null) {
+            status = EndpointStatus.NOT_IMPLEMENTED;
+        } else {
+            methodPointer = SmartPointerManager.getInstance(project).createSmartPsiElementPointer(psiMethod);
+            boolean hasIssues = PathValidator.validate(openApi, path).isPresent()
+                    || MethodValidator.validate(openApi, path, method).isPresent()
+                    || !ParameterValidator.validate(operation, psiMethod).isEmpty();
+
+            status = hasIssues ? EndpointStatus.HAS_ISSUES : EndpointStatus.IMPLEMENTED;
         }
-        
-        endpointInfos.add(new EndpointInfo(path, method, status, tag));
-        LOG.warn("[ApiStatusService] Added EndpointInfo: Path=" + path + ", Method=" + method + ", Status=" + status + ", Tag=" + tag);
+
+        String tag = (operation.getTags() != null && !operation.getTags().isEmpty()) ? operation.getTags().get(0) : null;
+        endpointInfos.add(new EndpointInfo(path, method, status, tag, methodPointer));
     }
 
-    private Map<String, Set<String>> findImplementedEndpoints() {
-        return ApplicationManager.getApplication().runReadAction((Computable<Map<String, Set<String>>>) () -> {
-            Map<String, Set<String>> implementedMap = new HashMap<>();
-            // Use allScope to include project source, libraries, and dependencies.
+    private Map<String, Map<String, PsiMethod>> findImplementedEndpoints() {
+        return ApplicationManager.getApplication().runReadAction((Computable<Map<String, Map<String, PsiMethod>>>) () -> {
+            Map<String, Map<String, PsiMethod>> implementedMap = new HashMap<>();
             GlobalSearchScope scope = GlobalSearchScope.allScope(project);
-            LOG.warn("[ApiStatusService] findImplementedEndpoints(): Starting annotation search.");
 
-            // Handle composed annotations like @GetMapping
             for (String annotationFqn : COMPOSED_MAPPINGS.keySet()) {
                 PsiClass ann = JavaPsiFacade.getInstance(project).findClass(annotationFqn, scope);
-                if (ann == null) {
-                    LOG.warn("[ApiStatusService] findImplementedEndpoints(): Annotation class not found: " + annotationFqn);
-                    continue;
-                }
-                Collection<PsiModifierListOwner> owners = AnnotationTargetsSearch.search(ann, scope).findAll();
-                LOG.warn("[ApiStatusService] findImplementedEndpoints(): Found " + owners.size() + " targets for " + annotationFqn);
-                for (PsiModifierListOwner owner : owners) {
+                if (ann == null) continue;
+                for (PsiModifierListOwner owner : AnnotationTargetsSearch.search(ann, scope).findAll()) {
                     if (owner instanceof PsiMethod) {
                         collectFromComposedMapping((PsiMethod) owner, annotationFqn, COMPOSED_MAPPINGS.get(annotationFqn), implementedMap);
                     }
                 }
             }
 
-            // Handle generic @RequestMapping on methods
             PsiClass reqAnn = JavaPsiFacade.getInstance(project).findClass(REQUEST_MAPPING, scope);
             if (reqAnn != null) {
-                Collection<PsiModifierListOwner> owners = AnnotationTargetsSearch.search(reqAnn, scope).findAll();
-                LOG.warn("[ApiStatusService] findImplementedEndpoints(): Found " + owners.size() + " targets for " + REQUEST_MAPPING);
-                for (PsiModifierListOwner owner : owners) {
+                for (PsiModifierListOwner owner : AnnotationTargetsSearch.search(reqAnn, scope).findAll()) {
                     if (owner instanceof PsiMethod) {
                         collectFromRequestMapping((PsiMethod) owner, implementedMap);
                     }
                 }
-            } else {
-                LOG.warn("[ApiStatusService] findImplementedEndpoints(): Annotation class not found: " + REQUEST_MAPPING);
             }
-            LOG.warn("[ApiStatusService] findImplementedEndpoints(): Finished annotation search.");
             return implementedMap;
         });
     }
 
-    private void collectFromComposedMapping(PsiMethod method, String annotationFqn, String httpMethod, Map<String, Set<String>> out) {
-        LOG.warn("[ApiStatusService] collectFromComposedMapping(): Processing method: " + method.getName() + " with annotation: " + annotationFqn);
+    private void collectFromComposedMapping(PsiMethod method, String annotationFqn, String httpMethod, Map<String, Map<String, PsiMethod>> out) {
         PsiAnnotation ann = method.getAnnotation(annotationFqn);
         if (ann == null) return;
         String[] methodPaths = extractPaths(ann);
@@ -139,21 +126,18 @@ public class ApiStatusService {
         for (String classPath : classPaths) {
             for (String methodPath : methodPaths) {
                 String combined = combinePaths(classPath, methodPath);
-                out.computeIfAbsent(combined, k -> new HashSet<>()).add(httpMethod);
-                LOG.warn("[ApiStatusService] collectFromComposedMapping(): Added to map: Path='" + combined + "', Method='" + httpMethod + "'");
+                out.computeIfAbsent(combined, k -> new HashMap<>()).put(httpMethod, method);
             }
         }
     }
 
-    private void collectFromRequestMapping(PsiMethod method, Map<String, Set<String>> out) {
-        LOG.warn("[ApiStatusService] collectFromRequestMapping(): Processing method: " + method.getName());
+    private void collectFromRequestMapping(PsiMethod method, Map<String, Map<String, PsiMethod>> out) {
         PsiAnnotation ann = method.getAnnotation(REQUEST_MAPPING);
         if (ann == null) return;
         String[] methodPaths = extractPaths(ann);
         if (methodPaths.length == 0) methodPaths = new String[]{""};
         Set<String> httpMethods = extractHttpMethods(ann);
         if (httpMethods.isEmpty()) {
-            LOG.warn("[ApiStatusService] collectFromRequestMapping(): No HTTP methods found for " + method.getName() + ", assuming all COMPOSED_MAPPINGS methods.");
             httpMethods.addAll(COMPOSED_MAPPINGS.values());
         }
         String[] classPaths = getClassLevelPaths(method.getContainingClass());
@@ -161,8 +145,7 @@ public class ApiStatusService {
             for (String methodPath : methodPaths) {
                 String combined = combinePaths(classPath, methodPath);
                 for (String http : httpMethods) {
-                    out.computeIfAbsent(combined, k -> new HashSet<>()).add(http);
-                    LOG.warn("[ApiStatusService] collectFromRequestMapping(): Added to map: Path='" + combined + "', Method='" + http + "'");
+                    out.computeIfAbsent(combined, k -> new HashMap<>()).put(http, method);
                 }
             }
         }
@@ -173,43 +156,32 @@ public class ApiStatusService {
         PsiAnnotation classAnn = psiClass.getAnnotation(REQUEST_MAPPING);
         if (classAnn == null) return new String[]{""};
         String[] classPaths = extractPaths(classAnn);
-        LOG.warn("[ApiStatusService] getClassLevelPaths(): Class level paths for " + psiClass.getName() + ": " + Arrays.toString(classPaths));
         return (classPaths.length == 0) ? new String[]{""} : classPaths;
     }
 
     private String[] extractPaths(PsiAnnotation annotation) {
         PsiAnnotationMemberValue val = annotation.findAttributeValue("value");
         if (val == null) val = annotation.findAttributeValue("path");
-        if (val == null) {
-            LOG.warn("[ApiStatusService] extractPaths(): No 'value' or 'path' attribute found for annotation: " + annotation.getQualifiedName());
-            return new String[0];
-        }
+        if (val == null) return new String[0];
         if (val instanceof PsiArrayInitializerMemberValue) {
-            String[] paths = Arrays.stream(((PsiArrayInitializerMemberValue) val).getInitializers())
+            return Arrays.stream(((PsiArrayInitializerMemberValue) val).getInitializers())
                     .map(this::resolveString)
                     .filter(Objects::nonNull)
                     .toArray(String[]::new);
-            LOG.warn("[ApiStatusService] extractPaths(): Extracted array paths: " + Arrays.toString(paths));
-            return paths;
         } else {
             String path = resolveString(val);
-            LOG.warn("[ApiStatusService] extractPaths(): Extracted single path: " + path);
             return path == null ? new String[0] : new String[]{path};
         }
     }
 
     private String resolveString(PsiAnnotationMemberValue value) {
         Object constValue = constEval.computeConstantExpression(value);
-        LOG.warn("[ApiStatusService] resolveString(): Resolving value: '" + value.getText() + "' to '" + constValue + "'");
         return constValue instanceof String ? (String) constValue : null;
     }
 
     private Set<String> extractHttpMethods(PsiAnnotation annotation) {
         PsiAnnotationMemberValue methodAttr = annotation.findAttributeValue("method");
-        if (methodAttr == null) {
-            LOG.warn("[ApiStatusService] extractHttpMethods(): No 'method' attribute found for annotation: " + annotation.getQualifiedName());
-            return Collections.emptySet();
-        }
+        if (methodAttr == null) return Collections.emptySet();
         List<PsiAnnotationMemberValue> values = methodAttr instanceof PsiArrayInitializerMemberValue
                 ? Arrays.asList(((PsiArrayInitializerMemberValue) methodAttr).getInitializers())
                 : Collections.singletonList(methodAttr);
@@ -222,21 +194,16 @@ public class ApiStatusService {
             else if (text.contains("DELETE")) result.add("DELETE");
             else if (text.contains("PATCH")) result.add("PATCH");
         }
-        LOG.warn("[ApiStatusService] extractHttpMethods(): Extracted HTTP methods: " + result);
         return result;
     }
 
     private String combinePaths(String c, String m) {
         String classPath = (c == null) ? "" : c.trim();
         String methodPath = (m == null) ? "" : m.trim();
-
-        // Remove leading/trailing slashes from both parts for consistent joining
         if (classPath.startsWith("/")) classPath = classPath.substring(1);
         if (classPath.endsWith("/")) classPath = classPath.substring(0, classPath.length() - 1);
-
         if (methodPath.startsWith("/")) methodPath = methodPath.substring(1);
         if (methodPath.endsWith("/")) methodPath = methodPath.substring(0, methodPath.length() - 1);
-
         String combinedPath;
         if (classPath.isEmpty() && methodPath.isEmpty()) {
             combinedPath = "/";
@@ -247,7 +214,6 @@ public class ApiStatusService {
         } else {
             combinedPath = "/" + classPath + "/" + methodPath;
         }
-        LOG.warn("[ApiStatusService] combinePaths(): Result: '" + combinedPath + "'");
         return combinedPath;
     }
 }
