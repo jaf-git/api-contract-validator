@@ -81,7 +81,7 @@ public class ApiStatusService {
             methodPointer = SmartPointerManager.getInstance(project).createSmartPsiElementPointer(psiMethod);
             boolean hasIssues = PathValidator.validate(openApi, path).isPresent()
                     || MethodValidator.validate(openApi, path, method).isPresent()
-                    || !ParameterValidator.validate(operation, psiMethod).isEmpty();
+                    || !ParameterValidator.validate(openApi, operation, psiMethod).isEmpty();
 
             status = hasIssues ? EndpointStatus.HAS_ISSUES : EndpointStatus.IMPLEMENTED;
         }

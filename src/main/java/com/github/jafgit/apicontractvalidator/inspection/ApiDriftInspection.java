@@ -110,7 +110,7 @@ public class ApiDriftInspection extends AbstractBaseJavaLocalInspectionTool {
                                 Operation operation = getOperation(pathItem, httpMethod);
                                 if (operation != null) {
                                     LOG.warn("[ApiDriftInspection] Calling ParameterValidator for method: " + method.getName() + " on path: " + fullPath);
-                                    ParameterValidator.validate(operation, method, holder);
+                                    ParameterValidator.validate(openApi, operation, method, holder);
                                 }
                             }
                         }
