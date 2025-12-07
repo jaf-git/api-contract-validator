@@ -9,6 +9,7 @@ import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.progress.ProgressIndicator;
 import com.intellij.openapi.progress.ProgressManager;
 import com.intellij.openapi.progress.Task;
+import com.intellij.openapi.project.DumbService;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.openapi.vfs.VirtualFileManager;
@@ -74,47 +75,50 @@ public class ApiToolWindowPanel extends JPanel implements Disposable {
                 }
             }
         });
+        updateTreeInBackground();
     }
 
     private void updateTreeInBackground() {
         LOG.warn("[ApiToolWindowPanel] updateTreeInBackground() called.");
-        ProgressManager.getInstance().run(new Task.Backgroundable(project, "Scanning API Endpoints...") {
-            @Override
-            public void run(@NotNull ProgressIndicator indicator) {
-                LOG.warn("[ApiToolWindowPanel] Background task run() started.");
-                ApiStatusService statusService = new ApiStatusService(project);
-                LOG.warn("[ApiToolWindowPanel] Creating ApiStatusService: "+ statusService);
-                List<EndpointInfo> endpoints = statusService.getEndpointInfos();
-                LOG.warn("[ApiToolWindowPanel] Background task finished. Found " + endpoints.size() + " endpoints.");
-                SwingUtilities.invokeLater(() -> {
-                    LOG.warn("[ApiToolWindowPanel] Updating UI on EDT.");
-                    DefaultMutableTreeNode root = (DefaultMutableTreeNode) treeModel.getRoot();
-                    LOG.warn("[ApiToolWindowPanel] root: " + root);
-                    root.removeAllChildren();
+        DumbService.getInstance(project).runWhenSmart(() -> {
+            ProgressManager.getInstance().run(new Task.Backgroundable(project, "Scanning API Endpoints...") {
+                @Override
+                public void run(@NotNull ProgressIndicator indicator) {
+                    LOG.warn("[ApiToolWindowPanel] Background task run() started.");
+                    ApiStatusService statusService = new ApiStatusService(project);
+                    LOG.warn("[ApiToolWindowPanel] Creating ApiStatusService: " + statusService);
+                    List<EndpointInfo> endpoints = statusService.getEndpointInfos();
+                    LOG.warn("[ApiToolWindowPanel] Background task finished. Found " + endpoints.size() + " endpoints.");
+                    SwingUtilities.invokeLater(() -> {
+                        LOG.warn("[ApiToolWindowPanel] Updating UI on EDT.");
+                        DefaultMutableTreeNode root = (DefaultMutableTreeNode) treeModel.getRoot();
+                        LOG.warn("[ApiToolWindowPanel] root: " + root);
+                        root.removeAllChildren();
 
-                    if (endpoints.isEmpty()) {
-                        root.add(new DefaultMutableTreeNode("No 'openapi.yaml' found or it is empty."));
-                    } else {
-                        Map<String, DefaultMutableTreeNode> tagNodes = new TreeMap<>(); // Use TreeMap for sorted tags
+                        if (endpoints.isEmpty()) {
+                            root.add(new DefaultMutableTreeNode("No 'openapi.yaml' found or it is empty."));
+                        } else {
+                            Map<String, DefaultMutableTreeNode> tagNodes = new TreeMap<>(); // Use TreeMap for sorted tags
 
-                        for (EndpointInfo endpoint : endpoints) {
-                            String tag = endpoint.getTag();
-                            if (tag == null || tag.trim().isEmpty()) {
-                                tag = "General"; // Default tag for untagged endpoints
+                            for (EndpointInfo endpoint : endpoints) {
+                                String tag = endpoint.getTag();
+                                if (tag == null || tag.trim().isEmpty()) {
+                                    tag = "General"; // Default tag for untagged endpoints
+                                }
+
+                                DefaultMutableTreeNode tagNode = tagNodes.computeIfAbsent(tag, k -> {
+                                    DefaultMutableTreeNode newNode = new DefaultMutableTreeNode(k);
+                                    root.add(newNode);
+                                    return newNode;
+                                });
+                                tagNode.add(new DefaultMutableTreeNode(endpoint));
                             }
-
-                            DefaultMutableTreeNode tagNode = tagNodes.computeIfAbsent(tag, k -> {
-                                DefaultMutableTreeNode newNode = new DefaultMutableTreeNode(k);
-                                root.add(newNode);
-                                return newNode;
-                            });
-                            tagNode.add(new DefaultMutableTreeNode(endpoint));
                         }
-                    }
-                    treeModel.reload(root);
-                    LOG.warn("[ApiToolWindowPanel] UI update complete.");
-                });
-            }
+                        treeModel.reload(root);
+                        LOG.warn("[ApiToolWindowPanel] UI update complete.");
+                    });
+                }
+            });
         });
     }
 
