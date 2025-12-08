@@ -35,7 +35,7 @@ dependencies {
     testImplementation(libs.opentest4j)
 
 
-    implementation("io.swagger.parser.v3:swagger-parser:2.1.20")
+    implementation("io.swagger.parser.v3:swagger-parser:2.1.36")
 
     intellijPlatform {
         intellijIdea(providers.gradleProperty("platformVersion"))
