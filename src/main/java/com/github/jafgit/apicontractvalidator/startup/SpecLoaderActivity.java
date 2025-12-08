@@ -1,6 +1,6 @@
 package com.github.jafgit.apicontractvalidator.startup;
 
-import com.github.jafgit.apicontractvalidator.services.OpenApiSpecService;
+import com.github.jafgit.apicontractvalidator.core.OpenApiSpecService;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.progress.ProgressIndicator;
 import com.intellij.openapi.progress.Task;

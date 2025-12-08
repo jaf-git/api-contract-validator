@@ -1,4 +1,4 @@
-package com.github.jafgit.apicontractvalidator.services;
+package com.github.jafgit.apicontractvalidator.core;
 
 import com.github.jafgit.apicontractvalidator.listeners.SpecUpdateListener;
 import com.intellij.codeInsight.daemon.DaemonCodeAnalyzer;

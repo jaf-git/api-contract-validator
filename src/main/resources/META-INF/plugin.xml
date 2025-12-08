@@ -15,7 +15,7 @@
 
         <!-- Register the project service that will hold the cached spec -->
         <projectService
-                serviceImplementation="com.github.jafgit.apicontractvalidator.services.OpenApiSpecService"/>
+                serviceImplementation="com.github.jafgit.apicontractvalidator.core.OpenApiSpecService"/>
 
         <!-- Register the startup activity to load the spec in the background -->
         <backgroundPostStartupActivity

@@ -1,6 +1,6 @@
 package com.github.jafgit.apicontractvalidator.toolpanel.services;
 
-import com.github.jafgit.apicontractvalidator.services.OpenApiSpecService;
+import com.github.jafgit.apicontractvalidator.core.OpenApiSpecService;
 import com.github.jafgit.apicontractvalidator.toolpanel.model.EndpointInfo;
 import com.github.jafgit.apicontractvalidator.toolpanel.model.EndpointStatus;
 import com.github.jafgit.apicontractvalidator.validator.MethodValidator;
@@ -16,7 +16,6 @@ import com.intellij.psi.search.searches.AnnotationTargetsSearch;
 import io.swagger.v3.oas.models.OpenAPI;
 import io.swagger.v3.oas.models.Operation;
 import io.swagger.v3.oas.models.PathItem;
-import org.jetbrains.annotations.NotNull;
 
 import java.util.*;
 

@@ -1,6 +1,6 @@
 package com.github.jafgit.apicontractvalidator.inspection;
 
-import com.github.jafgit.apicontractvalidator.services.OpenApiSpecService;
+import com.github.jafgit.apicontractvalidator.core.OpenApiSpecService;
 import com.github.jafgit.apicontractvalidator.validator.MethodValidator;
 import com.github.jafgit.apicontractvalidator.validator.ParameterValidator;
 import com.github.jafgit.apicontractvalidator.validator.PathValidator;
